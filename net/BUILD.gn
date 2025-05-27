@@ -4,7 +4,6 @@
 
 import("//build/buildflag_header.gni")
 import("//build/config/cast.gni")
-import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/compiler/compiler.gni")
 import("//build/config/cronet/config.gni")
 import("//build/config/features.gni")
@@ -25,6 +24,7 @@ if (is_android) {
 } else if (is_mac) {
   import("//build/config/mac/mac_sdk.gni")
 } else if (is_ios) {
+  import("//build/config/apple/mobile_config.gni")
   import("//build/config/ios/bundle_data_from_filelist.gni")
 }
 
@@ -158,6 +158,8 @@ component("net") {
     "base/backoff_entry.h",
     "base/backoff_entry_serializer.cc",
     "base/backoff_entry_serializer.h",
+    "base/base64.cc",
+    "base/base64.h",
     "base/cache_type.h",
     "base/chunked_upload_data_stream.cc",
     "base/chunked_upload_data_stream.h",
@@ -165,10 +167,12 @@ component("net") {
     "base/completion_repeating_callback.h",
     "base/connection_endpoint_metadata.cc",
     "base/connection_endpoint_metadata.h",
+    "base/connection_migration_information.cc",
+    "base/connection_migration_information.h",
     "base/data_url.cc",
     "base/data_url.h",
-    "base/datagram_buffer.cc",
-    "base/datagram_buffer.h",
+    "base/does_url_match_filter.cc",
+    "base/does_url_match_filter.h",
     "base/elements_upload_data_stream.cc",
     "base/elements_upload_data_stream.h",
     "base/expiring_cache.h",
@@ -197,6 +201,8 @@ component("net") {
     "base/io_buffer.h",
     "base/ip_address.cc",
     "base/ip_address.h",
+    "base/ip_address_util.cc",
+    "base/ip_address_util.h",
     "base/ip_endpoint.cc",
     "base/ip_endpoint.h",
     "base/isolation_info.cc",
@@ -209,6 +215,8 @@ component("net") {
     "base/load_states_list.h",
     "base/load_timing_info.cc",
     "base/load_timing_info.h",
+    "base/load_timing_internal_info.cc",
+    "base/load_timing_internal_info.h",
     "base/logging_network_change_observer.cc",
     "base/logging_network_change_observer.h",
     "base/lookup_string_in_fixed_set.cc",
@@ -224,6 +232,8 @@ component("net") {
     "base/net_info_source_list.h",
     "base/net_module.cc",
     "base/net_module.h",
+    "base/net_platform_api_util.cc",
+    "base/net_platform_api_util.h",
     "base/net_string_util.h",
     "base/network_activity_monitor.cc",
     "base/network_activity_monitor.h",
@@ -241,8 +251,13 @@ component("net") {
     "base/network_interfaces.h",
     "base/network_isolation_key.cc",
     "base/network_isolation_key.h",
+    "base/network_isolation_partition.cc",
+    "base/network_isolation_partition.h",
     "base/parse_number.cc",
     "base/parse_number.h",
+    "base/pickle.h",
+    "base/pickle_base_types.h",
+    "base/pickle_traits.h",
     "base/platform_mime_util.h",
     "base/port_util.cc",
     "base/port_util.h",
@@ -261,6 +276,8 @@ component("net") {
     "base/proxy_string_util.cc",
     "base/proxy_string_util.h",
     "base/rand_callback.h",
+    "base/reconnect_notifier.cc",
+    "base/reconnect_notifier.h",
     "base/registry_controlled_domains/registry_controlled_domain.cc",
     "base/registry_controlled_domains/registry_controlled_domain.h",
     "base/request_priority.cc",
@@ -360,6 +377,10 @@ component("net") {
     "cert/multi_log_ct_verifier.h",
     "cert/multi_threaded_cert_verifier.cc",
     "cert/multi_threaded_cert_verifier.h",
+    "cert/qwac.cc",
+    "cert/qwac.h",
+    "cert/require_ct_delegate.cc",
+    "cert/require_ct_delegate.h",
     "cert/root_cert_list_generated.h",
     "cert/sct_auditing_delegate.h",
     "cert/sct_status_flags.cc",
@@ -370,8 +391,6 @@ component("net") {
     "cert/signed_certificate_timestamp_and_status.h",
     "cert/signed_tree_head.cc",
     "cert/signed_tree_head.h",
-    "cert/symantec_certs.cc",
-    "cert/symantec_certs.h",
     "cert/test_root_certs.cc",
     "cert/test_root_certs.h",
     "cert/time_conversions.cc",
@@ -418,16 +437,23 @@ component("net") {
     "cookies/cookie_setting_override.h",
     "cookies/cookie_store.cc",
     "cookies/cookie_store.h",
-    "cookies/cookie_switches.cc",
-    "cookies/cookie_switches.h",
     "cookies/cookie_util.cc",
     "cookies/cookie_util.h",
     "cookies/parsed_cookie.cc",
     "cookies/parsed_cookie.h",
+    "cookies/ref_unique_cookie_key.cc",
+    "cookies/ref_unique_cookie_key.h",
     "cookies/site_for_cookies.cc",
     "cookies/site_for_cookies.h",
     "cookies/static_cookie_policy.cc",
     "cookies/static_cookie_policy.h",
+    "cookies/unique_cookie_key.cc",
+    "cookies/unique_cookie_key.h",
+    "device_bound_sessions/session_access.cc",
+    "device_bound_sessions/session_access.h",
+    "device_bound_sessions/session_key.cc",
+    "device_bound_sessions/session_key.h",
+    "device_bound_sessions/session_usage.h",
     "disk_cache/backend_cleanup_tracker.cc",
     "disk_cache/backend_cleanup_tracker.h",
     "disk_cache/backend_experiment.cc",
@@ -477,6 +503,7 @@ component("net") {
     "disk_cache/memory/mem_backend_impl.h",
     "disk_cache/memory/mem_entry_impl.cc",
     "disk_cache/memory/mem_entry_impl.h",
+    "disk_cache/memory_entry_data_hints.h",
     "disk_cache/net_log_parameters.cc",
     "disk_cache/net_log_parameters.h",
     "disk_cache/simple/post_operation_waiter.cc",
@@ -486,7 +513,6 @@ component("net") {
     "disk_cache/simple/simple_backend_version.h",
     "disk_cache/simple/simple_entry_format.cc",
     "disk_cache/simple/simple_entry_format.h",
-    "disk_cache/simple/simple_entry_format_history.h",
     "disk_cache/simple/simple_entry_impl.cc",
     "disk_cache/simple/simple_entry_impl.h",
     "disk_cache/simple/simple_entry_operation.cc",
@@ -517,6 +543,7 @@ component("net") {
     "filter/gzip_source_stream.h",
     "filter/source_stream.cc",
     "filter/source_stream.h",
+    "filter/source_stream_type.h",
     "first_party_sets/addition_overlaps_union_find.cc",
     "first_party_sets/addition_overlaps_union_find.h",
     "first_party_sets/first_party_set_entry.cc",
@@ -584,6 +611,8 @@ component("net") {
     "http/http_cache.h",
     "http/http_cache_transaction.cc",
     "http/http_cache_transaction.h",
+    "http/http_cache_util.cc",
+    "http/http_cache_util.h",
     "http/http_cache_writers.cc",
     "http/http_cache_writers.h",
     "http/http_chunked_decoder.cc",
@@ -647,6 +676,10 @@ component("net") {
     "http/http_stream_pool.h",
     "http/http_stream_pool_attempt_manager.cc",
     "http/http_stream_pool_attempt_manager.h",
+    "http/http_stream_pool_attempt_manager_quic_attempt.cc",
+    "http/http_stream_pool_attempt_manager_quic_attempt.h",
+    "http/http_stream_pool_attempt_manager_tcp_based_attempt.cc",
+    "http/http_stream_pool_attempt_manager_tcp_based_attempt.h",
     "http/http_stream_pool_group.cc",
     "http/http_stream_pool_group.h",
     "http/http_stream_pool_handle.cc",
@@ -655,10 +688,8 @@ component("net") {
     "http/http_stream_pool_job.h",
     "http/http_stream_pool_job_controller.cc",
     "http/http_stream_pool_job_controller.h",
-    "http/http_stream_pool_quic_task.cc",
-    "http/http_stream_pool_quic_task.h",
-    "http/http_stream_pool_switching_info.cc",
-    "http/http_stream_pool_switching_info.h",
+    "http/http_stream_pool_request_info.cc",
+    "http/http_stream_pool_request_info.h",
     "http/http_stream_request.cc",
     "http/http_stream_request.h",
     "http/http_transaction.h",
@@ -668,6 +699,12 @@ component("net") {
     "http/http_vary_data.cc",
     "http/http_vary_data.h",
     "http/http_version.h",
+    "http/no_vary_search_cache.cc",
+    "http/no_vary_search_cache.h",
+    "http/no_vary_search_cache_storage.cc",
+    "http/no_vary_search_cache_storage.h",
+    "http/no_vary_search_cache_storage_file_operations.cc",
+    "http/no_vary_search_cache_storage_file_operations.h",
     "http/partial_data.cc",
     "http/partial_data.h",
     "http/proxy_client_socket.cc",
@@ -693,6 +730,7 @@ component("net") {
     "log/net_log_event_type.cc",
     "log/net_log_event_type.h",
     "log/net_log_event_type_list.h",
+    "log/net_log_heavily_redacted_allowlist.h",
     "log/net_log_source.cc",
     "log/net_log_source.h",
     "log/net_log_source_type.h",
@@ -933,6 +971,8 @@ component("net") {
     "socket/stream_attempt.h",
     "socket/stream_socket.cc",
     "socket/stream_socket.h",
+    "socket/stream_socket_close_reason.cc",
+    "socket/stream_socket_close_reason.h",
     "socket/stream_socket_handle.cc",
     "socket/stream_socket_handle.h",
     "socket/tcp_client_socket.cc",
@@ -1008,6 +1048,8 @@ component("net") {
     "ssl/cert_compression.h",
     "ssl/client_cert_identity.cc",
     "ssl/client_cert_identity.h",
+    "ssl/client_cert_matcher.cc",
+    "ssl/client_cert_matcher.h",
     "ssl/client_cert_store.h",
     "ssl/openssl_private_key.cc",
     "ssl/openssl_private_key.h",
@@ -1054,6 +1096,7 @@ component("net") {
     "url_request/referrer_policy.h",
     "url_request/static_http_user_agent_settings.cc",
     "url_request/static_http_user_agent_settings.h",
+    "url_request/storage_access_status_cache.h",
     "url_request/url_request.cc",
     "url_request/url_request.h",
     "url_request/url_request_context.cc",
@@ -1077,8 +1120,6 @@ component("net") {
     "url_request/url_request_netlog_params.h",
     "url_request/url_request_redirect_job.cc",
     "url_request/url_request_redirect_job.h",
-    "url_request/view_cache_helper.cc",
-    "url_request/view_cache_helper.h",
     "url_request/websocket_handshake_userdata_key.cc",
     "url_request/websocket_handshake_userdata_key.h",
   ]
@@ -1098,10 +1139,10 @@ component("net") {
   deps = [
     ":cronet_buildflags",
     ":net_deps",
-    "//build:chromeos_buildflags",
     "//components/miracle_parameter/common",
     "//components/network_time/time_tracker",
     "//net/http:transport_security_state_generated_files",
+    "//third_party/simdutf:simdutf",
   ]
 
   public_deps = [
@@ -1186,12 +1227,12 @@ component("net") {
       "device_bound_sessions/session_binding_utils.h",
       "device_bound_sessions/session_challenge_param.cc",
       "device_bound_sessions/session_challenge_param.h",
+      "device_bound_sessions/session_error.cc",
+      "device_bound_sessions/session_error.h",
       "device_bound_sessions/session_inclusion_rules.cc",
       "device_bound_sessions/session_inclusion_rules.h",
       "device_bound_sessions/session_json_utils.cc",
       "device_bound_sessions/session_json_utils.h",
-      "device_bound_sessions/session_key.cc",
-      "device_bound_sessions/session_key.h",
       "device_bound_sessions/session_params.cc",
       "device_bound_sessions/session_params.h",
       "device_bound_sessions/session_service.cc",
@@ -1272,6 +1313,9 @@ component("net") {
       "proxy_resolution/proxy_config_service_linux.cc",
       "proxy_resolution/proxy_config_service_linux.h",
     ]
+    if (use_glib) {
+      deps += [ "//ui/base/glib" ]
+    }
   }
 
   if (is_linux || is_chromeos || is_android) {
@@ -1512,6 +1556,7 @@ component("net") {
       "third_party/nss/ssl/cmpcert.cc",
       "third_party/nss/ssl/cmpcert.h",
     ]
+    deps += [ "//build:chromeos_buildflags" ]
     if (!is_castos) {
       sources += [
         "ssl/client_cert_store_nss.cc",
@@ -1573,12 +1618,15 @@ component("net") {
     libs = [ "resolv" ]
     frameworks = [
       "CFNetwork.framework",
-      "CoreTelephony.framework",
       "MobileCoreServices.framework",
       "Security.framework",
       "SystemConfiguration.framework",
       "UniformTypeIdentifiers.framework",
     ]
+
+    if (target_platform == "iphoneos") {
+      frameworks += [ "CoreTelephony.framework" ]
+    }
   }
 
   if (is_win) {
@@ -1926,6 +1974,8 @@ if (!is_ios) {
     testonly = true
     sources = [
       "tools/dump_cache/dump_cache.cc",
+      "tools/dump_cache/dump_cache_helper.cc",
+      "tools/dump_cache/dump_cache_helper.h",
       "tools/dump_cache/dump_files.cc",
       "tools/dump_cache/dump_files.h",
     ]
@@ -1976,8 +2026,6 @@ static_library("test_support") {
     "base/mock_network_change_notifier.h",
     "base/test_completion_callback.cc",
     "base/test_completion_callback.h",
-    "base/test_data_stream.cc",
-    "base/test_data_stream.h",
     "cert/internal/cert_issuer_source_sync_unittest.h",
     "cert/internal/test_helpers.cc",
     "cert/internal/test_helpers.h",
@@ -2000,6 +2048,8 @@ static_library("test_support") {
     "cookies/cookie_store_unittest.h",
     "cookies/test_cookie_access_delegate.cc",
     "cookies/test_cookie_access_delegate.h",
+    "device_bound_sessions/test_support.cc",
+    "device_bound_sessions/test_support.h",
     "disk_cache/disk_cache_test_base.cc",
     "disk_cache/disk_cache_test_base.h",
     "disk_cache/disk_cache_test_util.cc",
@@ -2022,6 +2072,10 @@ static_library("test_support") {
     "http/http_transaction_test_util.h",
     "http/mock_http_cache.cc",
     "http/mock_http_cache.h",
+    "http/no_vary_search_cache_storage_mock_file_operations.cc",
+    "http/no_vary_search_cache_storage_mock_file_operations.h",
+    "http/no_vary_search_cache_test_utils.cc",
+    "http/no_vary_search_cache_test_utils.h",
     "http/transport_security_state_test_util.cc",
     "http/transport_security_state_test_util.h",
     "log/test_net_log.cc",
@@ -2070,6 +2124,8 @@ static_library("test_support") {
     "test/embedded_test_server/embedded_test_server.h",
     "test/embedded_test_server/embedded_test_server_connection_listener.cc",
     "test/embedded_test_server/embedded_test_server_connection_listener.h",
+    "test/embedded_test_server/expectation_handler.cc",
+    "test/embedded_test_server/expectation_handler.h",
     "test/embedded_test_server/http1_connection.cc",
     "test/embedded_test_server/http1_connection.h",
     "test/embedded_test_server/http2_connection.cc",
@@ -2080,18 +2136,32 @@ static_library("test_support") {
     "test/embedded_test_server/http_request.h",
     "test/embedded_test_server/http_response.cc",
     "test/embedded_test_server/http_response.h",
+    "test/embedded_test_server/install_default_websocket_handlers.cc",
+    "test/embedded_test_server/install_default_websocket_handlers.h",
+    "test/embedded_test_server/register_basic_auth_handler.cc",
+    "test/embedded_test_server/register_basic_auth_handler.h",
     "test/embedded_test_server/request_handler_util.cc",
     "test/embedded_test_server/request_handler_util.h",
     "test/embedded_test_server/simple_connection_listener.cc",
     "test/embedded_test_server/simple_connection_listener.h",
+    "test/embedded_test_server/websocket_check_origin_handler.cc",
+    "test/embedded_test_server/websocket_check_origin_handler.h",
+    "test/embedded_test_server/websocket_close_handler.cc",
+    "test/embedded_test_server/websocket_close_handler.h",
+    "test/embedded_test_server/websocket_close_observer_handler.cc",
+    "test/embedded_test_server/websocket_close_observer_handler.h",
     "test/embedded_test_server/websocket_connection.cc",
     "test/embedded_test_server/websocket_connection.h",
     "test/embedded_test_server/websocket_echo_handler.cc",
     "test/embedded_test_server/websocket_echo_handler.h",
+    "test/embedded_test_server/websocket_echo_request_headers_handler.cc",
+    "test/embedded_test_server/websocket_echo_request_headers_handler.h",
     "test/embedded_test_server/websocket_handler.cc",
     "test/embedded_test_server/websocket_handler.h",
     "test/embedded_test_server/websocket_message_assembler.cc",
     "test/embedded_test_server/websocket_message_assembler.h",
+    "test/embedded_test_server/websocket_split_packet_close_handler.cc",
+    "test/embedded_test_server/websocket_split_packet_close_handler.h",
     "test/event_waiter.h",
     "test/key_util.cc",
     "test/key_util.h",
@@ -2312,7 +2382,6 @@ if (!is_ios && !is_android) {
     deps = [
       ":net",
       "//base",
-      "//build:chromeos_buildflags",
       "//build/win:default_exe_manifest",
     ]
   }
@@ -2574,17 +2643,22 @@ if (is_ios) {
 if (!is_cronet_build) {
   test("net_fuzztests") {
     sources = [
+      "cert/qwac_fuzztest.cc",
       "cert/x509_certificate_fuzztest.cc",
       "http/http_cookie_indices_fuzztest.cc",
     ]
 
     fuzztests = [
       "CookieIndicesFuzzTest.FuzzParseFromHeader",
+      "QwacFuzzTest.FuzzParseQcStatements",
+      "QwacFuzzTest.FuzzParseQcTypeInfo",
+      "QwacFuzzTest.FuzzParseTwoQwacCertBinding",
       "X509CertificateFuzzTest.FuzzCreateFromDERCertChain",
     ]
 
     deps = [
       ":net",
+      "//testing/gtest",
       "//third_party/fuzztest:fuzztest_gtest_main",
     ]
   }
@@ -2602,9 +2676,10 @@ target(_test_target_type, "net_unittests") {
     "base/address_list_unittest.cc",
     "base/backoff_entry_serializer_unittest.cc",
     "base/backoff_entry_unittest.cc",
+    "base/base64_unittest.cc",
     "base/chunked_upload_data_stream_unittest.cc",
     "base/data_url_unittest.cc",
-    "base/datagram_buffer_unittest.cc",
+    "base/does_url_match_filter_unittest.cc",
     "base/elements_upload_data_stream_unittest.cc",
     "base/expiring_cache_unittest.cc",
     "base/file_stream_unittest.cc",
@@ -2614,6 +2689,7 @@ target(_test_target_type, "net_unittests") {
     "base/interval_test.cc",
     "base/io_buffer_unittest.cc",
     "base/ip_address_unittest.cc",
+    "base/ip_address_util_unittest.cc",
     "base/ip_endpoint_unittest.cc",
     "base/isolation_info_unittest.cc",
     "base/load_flags_to_string_unittest.cc",
@@ -2621,6 +2697,7 @@ target(_test_target_type, "net_unittests") {
     "base/mime_sniffer_unittest.cc",
     "base/mime_util_unittest.cc",
     "base/net_errors_unittest.cc",
+    "base/net_platform_api_util_unittest.cc",
     "base/net_string_util_unittest.cc",
     "base/network_activity_monitor_unittest.cc",
     "base/network_anonymization_key_unittest.cc",
@@ -2629,6 +2706,8 @@ target(_test_target_type, "net_unittests") {
     "base/network_interfaces_unittest.cc",
     "base/network_isolation_key_unittest.cc",
     "base/parse_number_unittest.cc",
+    "base/pickle_base_types_unittest.cc",
+    "base/pickle_unittest.cc",
     "base/port_util_unittest.cc",
     "base/prioritized_dispatcher_unittest.cc",
     "base/prioritized_task_runner_unittest.cc",
@@ -2668,8 +2747,8 @@ target(_test_target_type, "net_unittests") {
     "cert/merkle_tree_leaf_unittest.cc",
     "cert/multi_log_ct_verifier_unittest.cc",
     "cert/multi_threaded_cert_verifier_unittest.cc",
+    "cert/qwac_unittest.cc",
     "cert/signed_certificate_timestamp_unittest.cc",
-    "cert/symantec_certs_unittest.cc",
     "cert/test_root_certs_unittest.cc",
     "cert/time_conversions_unittest.cc",
     "cert/x509_cert_types_unittest.cc",
@@ -2767,6 +2846,9 @@ target(_test_target_type, "net_unittests") {
     "http/http_vary_data_unittest.cc",
     "http/mock_allow_http_auth_preferences.cc",
     "http/mock_allow_http_auth_preferences.h",
+    "http/no_vary_search_cache_storage_file_operations_unittest.cc",
+    "http/no_vary_search_cache_storage_unittest.cc",
+    "http/no_vary_search_cache_unittest.cc",
     "http/test_upload_data_stream_not_allow_http1.cc",
     "http/test_upload_data_stream_not_allow_http1.h",
     "http/transport_security_persister_unittest.cc",
@@ -2913,10 +2995,14 @@ target(_test_target_type, "net_unittests") {
     "tools/content_decoder_tool/content_decoder_tool.cc",
     "tools/content_decoder_tool/content_decoder_tool.h",
     "tools/content_decoder_tool/content_decoder_tool_unittest.cc",
+    "tools/dump_cache/dump_cache_helper.cc",
+    "tools/dump_cache/dump_cache_helper.h",
+    "tools/dump_cache/dump_cache_helper_unittest.cc",
     "tools/quic/quic_simple_client_test.cc",
     "tools/tld_cleanup/tld_cleanup_util_unittest.cc",
     "url_request/redirect_info_unittest.cc",
     "url_request/redirect_util_unittest.cc",
+    "url_request/storage_access_status_cache_unittest.cc",
     "url_request/url_request_context_builder_unittest.cc",
     "url_request/url_request_filter_unittest.cc",
     "url_request/url_request_http_job_unittest.cc",
@@ -2924,7 +3010,6 @@ target(_test_target_type, "net_unittests") {
     "url_request/url_request_job_unittest.cc",
     "url_request/url_request_quic_unittest.cc",
     "url_request/url_request_unittest.cc",
-    "url_request/view_cache_helper_unittest.cc",
   ]
 
   if (is_android) {
@@ -2941,7 +3026,7 @@ target(_test_target_type, "net_unittests") {
     ]
   }
 
-  if (is_chromeos_ash && use_nss_certs) {
+  if (is_chromeos && use_nss_certs) {
     sources += [
       "cert/nss_cert_database_chromeos_unittest.cc",
       "cert/nss_profile_filter_chromeos_unittest.cc",
@@ -3000,8 +3085,11 @@ target(_test_target_type, "net_unittests") {
     defines += [ "NET_DISABLE_ZSTD" ]
   }
 
+  fuzztests = [ "PickleTest.FuzzRoundTrip" ]
+
   deps = [
     ":cronet_buildflags",
+    ":isolation_info_proto",
     ":net",
     ":preload_decoder",
     ":quic_test_tools",
@@ -3010,12 +3098,12 @@ target(_test_target_type, "net_unittests") {
     ":test_support",
     "//base",
     "//base:i18n",
-    "//build:chromeos_buildflags",
     "//components/network_time/time_tracker",
     "//crypto",
     "//crypto:test_support",
     "//net/base/registry_controlled_domains",
     "//net/base/registry_controlled_domains:lookup_strings_test_sets",
+    "//net/cert:root_store_proto_lite",
     "//net/dns:tests",
     "//net/dns/public:tests",
     "//net/http:transport_security_state_unittest_data",
@@ -3027,7 +3115,9 @@ target(_test_target_type, "net_unittests") {
     "//testing/gtest",
     "//third_party/abseil-cpp:absl",
     "//third_party/anonymous_tokens:anonymous_tokens_tests",
+    "//third_party/perfetto:perfetto_test_support",
     "//third_party/protobuf:protobuf_lite",
+    "//third_party/simdutf:simdutf",
     "//third_party/zlib",
     "//url",
     "//url:buildflags",
@@ -3061,7 +3151,7 @@ target(_test_target_type, "net_unittests") {
     sources += [ "base/sockaddr_util_posix_unittest.cc" ]
   }
 
-  if (is_android || is_chromeos_ash) {
+  if (is_android || is_chromeos) {
     sources += [ "base/network_change_notifier_passive_unittest.cc" ]
   }
 
@@ -3098,7 +3188,6 @@ target(_test_target_type, "net_unittests") {
     "data/gencerts/",
     "data/pac_file_fetcher_unittest/",
     "data/quic_http_response_cache_data/",
-    "data/quic_http_response_cache_data_with_push/",
     "data/spdy_tests/",
     "data/test.html",
     "data/verify_certificate_chain_unittest/",
@@ -3359,6 +3448,10 @@ target(_test_target_type, "net_unittests") {
     sources += [
       "device_bound_sessions/cookie_craving_unittest.cc",
       "device_bound_sessions/jwk_utils_unittest.cc",
+      "device_bound_sessions/mock_session_service.cc",
+      "device_bound_sessions/mock_session_service.h",
+      "device_bound_sessions/mock_session_store.cc",
+      "device_bound_sessions/mock_session_store.h",
       "device_bound_sessions/registration_fetcher_param_unittest.cc",
       "device_bound_sessions/registration_fetcher_unittest.cc",
       "device_bound_sessions/session_binding_utils_unittest.cc",
@@ -3369,12 +3462,11 @@ target(_test_target_type, "net_unittests") {
       "device_bound_sessions/session_store_impl_unittest.cc",
       "device_bound_sessions/session_store_unittest.cc",
       "device_bound_sessions/session_unittest.cc",
-      "device_bound_sessions/test_util.cc",
-      "device_bound_sessions/test_util.h",
       "device_bound_sessions/unexportable_key_service_factory_unittest.cc",
     ]
     deps += [
       ":device_bound_sessions_storage_proto",
+      "//components/unexportable_keys:test_support",
       "//components/unexportable_keys:unexportable_keys",
     ]
   }
@@ -3428,6 +3520,10 @@ if (!is_ios) {
     }
     if (is_win) {
       deps += [ "//build/win:default_exe_manifest" ]
+    }
+
+    if (is_android) {
+      deps += [ "//net/android:net_java" ]
     }
   }
 }
@@ -3551,6 +3647,16 @@ fuzzer_test("net_mime_sniffer_fuzzer") {
   dict = "data/fuzzer_dictionaries/net_mime_sniffer_fuzzer.dict"
 }
 
+fuzzer_test("net_pickle_fuzzer") {
+  sources = [ "base/pickle_fuzzer.cc" ]
+  deps = [
+    ":net_fuzzer_test_support",
+    "//base",
+    "//net",
+  ]
+  seed_corpus = "//net/data/fuzzer_data/pickle/"
+}
+
 fuzzer_test("net_parse_proxy_list_pac_fuzzer") {
   sources = [ "proxy_resolution/parse_proxy_list_pac_fuzzer.cc" ]
   deps = [
@@ -3635,14 +3741,35 @@ fuzzer_test("net_cert_ct_decode_signed_certificate_timestamp_fuzzer") {
   ]
 }
 
+proto_library("canonical_cookie_proto") {
+  proto_in_dir = "//"
+  sources = [ "cookies/canonical_cookie.proto" ]
+  deps = [ "//testing/libfuzzer/proto:url_proto" ]
+}
+
+source_set("canonical_cookie_proto_converter") {
+  sources = [
+    "cookies/canonical_cookie_proto_converter.cc",
+    "cookies/canonical_cookie_proto_converter.h",
+  ]
+  deps = [
+    ":canonical_cookie_proto",
+    "//base",
+    "//net",
+    "//testing/libfuzzer/proto:url_proto",
+    "//testing/libfuzzer/proto:url_proto_converter",
+  ]
+}
+
 fuzzer_test("net_canonical_cookie_fuzzer") {
   sources = [ "cookies/canonical_cookie_fuzzer.cc" ]
   deps = [
+    ":canonical_cookie_proto",
+    ":canonical_cookie_proto_converter",
     ":net_fuzzer_test_support",
     "//net",
+    "//third_party/libprotobuf-mutator",
   ]
-  dict = "data/fuzzer_dictionaries/net_cookies_fuzzer.dict"
-  seed_corpus = "data/fuzzer_data/cookies/"
 }
 
 fuzzer_test("net_cookie_partition_key_fuzzer") {
@@ -4069,18 +4196,5 @@ if (is_linux || is_chromeos) {
       "//base",
       "//net",
     ]
-  }
-}
-
-if (is_android) {
-  java_cpp_strings("java_cookie_switches_srcjar") {
-    # External code should depend on ":cookie_switches_java" instead.
-    visibility = [ ":*" ]
-    sources = [ "cookies/cookie_switches.cc" ]
-    template = "cookies/android/java_templates/CookieSwitches.java.tmpl"
-  }
-
-  android_library("cookie_switches_java") {
-    srcjar_deps = [ ":java_cookie_switches_srcjar" ]
   }
 }

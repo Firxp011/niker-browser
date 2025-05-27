@@ -30,7 +30,6 @@
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/html/html_directory_element.h"
 #include "third_party/blink/renderer/core/html/html_menu_element.h"
 #include "third_party/blink/renderer/core/html/html_olist_element.h"
@@ -79,7 +78,7 @@ void LayoutCounter::WillBeDestroyed() {
   LayoutText::WillBeDestroyed();
 }
 
-void LayoutCounter::UpdateCounter(Vector<int> counter_values) {
+String LayoutCounter::UpdateCounter(Vector<int> counter_values) {
   NOT_DESTROYED();
   const CounterStyle* counter_style = NullableCounterStyle();
   String text = GenerateCounterText(counter_style, counter_values.front());
@@ -90,9 +89,11 @@ void LayoutCounter::UpdateCounter(Vector<int> counter_values) {
     }
   }
   SetTextIfNeeded(text);
+  return text;
 }
 
 const CounterStyle* LayoutCounter::NullableCounterStyle() const {
+  NOT_DESTROYED();
   // Note: CSS3 spec doesn't allow 'none' but CSS2.1 allows it. We currently
   // allow it for backward compatibility.
   // See https://github.com/w3c/csswg-drafts/issues/5795 for details.
@@ -104,6 +105,7 @@ const CounterStyle* LayoutCounter::NullableCounterStyle() const {
 }
 
 bool LayoutCounter::IsDirectionalSymbolMarker() const {
+  NOT_DESTROYED();
   const auto* counter_style = NullableCounterStyle();
   if (!counter_style || !counter_style->IsPredefinedSymbolMarker()) {
     return false;
@@ -114,6 +116,7 @@ bool LayoutCounter::IsDirectionalSymbolMarker() const {
 }
 
 const AtomicString& LayoutCounter::Separator() const {
+  NOT_DESTROYED();
   return counter_->Separator();
 }
 

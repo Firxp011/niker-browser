@@ -57,7 +57,7 @@ LogicalOffset ToLogicalOffset(const gfx::PointF& point,
 }  // anonymous namespace
 
 // With 100 unique strings, a 2^12 slot table has a false positive rate of ~2%.
-using ClassnameFilter = CountingBloomFilter<12>;
+using ClassnameFilter = WTF::BloomFilter<12>;
 using Corner = ScrollAnchor::Corner;
 
 SerializedAnchor::SerializedAnchor(const ScrollAnchorData& data,
@@ -402,8 +402,17 @@ bool ScrollAnchor::FindAnchorInPriorityCandidates() {
     if (candidate) {
       result = ExaminePriorityCandidate(candidate);
       if (IsViable(result.status)) {
+        // Start with the candidate object.
         anchor_object_ = candidate;
         corner_ = result.corner;
+
+        // Run the selection algorithm with the priority candidate as the root.
+        // This would override the anchor_object_ if there is a better
+        // alternative.
+        if (RuntimeEnabledFeatures::
+                ScrollAnchorPriorityCandidateSubtreeEnabled()) {
+          FindAnchorRecursive(candidate);
+        }
         return true;
       }
     }
@@ -414,8 +423,16 @@ bool ScrollAnchor::FindAnchorInPriorityCandidates() {
       PriorityCandidateFromNode(document.GetFindInPageActiveMatchNode());
   result = ExaminePriorityCandidate(candidate);
   if (IsViable(result.status)) {
+    // Start with the candidate object.
     anchor_object_ = candidate;
     corner_ = result.corner;
+
+    // Run the selection algorithm with the priority candidate as the root.
+    // This would override the anchor_object_ if there is a better
+    // alternative.
+    if (RuntimeEnabledFeatures::ScrollAnchorPriorityCandidateSubtreeEnabled()) {
+      FindAnchorRecursive(candidate);
+    }
     return true;
   }
   return false;

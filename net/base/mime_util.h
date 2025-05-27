@@ -48,6 +48,13 @@ NET_EXPORT bool GetWellKnownMimeTypeFromExtension(
 NET_EXPORT bool GetMimeTypeFromFile(const base::FilePath& file_path,
                                     std::string* mime_type);
 
+// Gets the mime type (if any) that is associated with the given file. Returns
+// true if a corresponding mime type exists. In this method, the search for a
+// mime type is constrained to a limited set of types known to the net library,
+// the OS/registry is not consulted.
+NET_EXPORT bool GetWellKnownMimeTypeFromFile(const base::FilePath& file_path,
+                                             std::string* mime_type);
+
 // Gets the preferred extension (if any) associated with the given mime type.
 // Returns true if a corresponding file extension exists.  The extension is
 // returned without a prefixed dot, ex "html".
@@ -151,6 +158,17 @@ NET_EXPORT void AddMultipartValueForUploadWithFileName(
 NET_EXPORT void AddMultipartFinalDelimiterForUpload(
     const std::string& mime_boundary,
     std::string* post_data);
+
+// A test-only helper that overrides the functionality above while it is in
+// scope, causing any query for a mime type to return the supplied
+// `overriding_mime_type`. Functionality other than "get a mime type" is
+// unaffected. Does not support nesting.
+class NET_EXPORT ScopedOverrideGetMimeTypeForTesting {
+ public:
+  explicit ScopedOverrideGetMimeTypeForTesting(
+      std::string_view overriding_mime_type);
+  ~ScopedOverrideGetMimeTypeForTesting();
+};
 
 }  // namespace net
 

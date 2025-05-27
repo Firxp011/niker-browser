@@ -25,7 +25,6 @@
 #include "third_party/blink/renderer/core/core_probes_inl.h"
 #include "third_party/blink/renderer/core/dom/layout_tree_builder_traversal.h"
 #include "third_party/blink/renderer/core/dom/node.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/visited_link_state.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/style/computed_style_base_constants.h"
@@ -49,6 +48,14 @@ ElementResolveContext::PseudoElementAncestors
 ElementResolveContext::BuildPseudoElementAncestors(Element* element) {
   PseudoElementAncestors pseudo_element_ancestors;
   if (!element->IsPseudoElement()) {
+    return pseudo_element_ancestors;
+  }
+  // View transition pseudo elements can have multiple pseudo element ancestors,
+  // but the spec says we should only check against the element itself.
+  // E.g. the tree can be root -> ::A -> ::B -> ::C, and we should match rule
+  // ::B for element being B, or rule ::C for element C.
+  if (element->IsViewTransitionPseudoElement()) {
+    pseudo_element_ancestors[--pseudo_element_ancestors_size_] = element;
     return pseudo_element_ancestors;
   }
   while (element->IsPseudoElement()) {
@@ -91,7 +98,7 @@ ElementResolveContext::ElementResolveContext(Element& element)
     : element_(&element),
       ultimate_originating_element_(
           element_->IsPseudoElement()
-              ? To<PseudoElement>(element_)->UltimateOriginatingElement()
+              ? &To<PseudoElement>(element_)->UltimateOriginatingElement()
               : element_),
       pseudo_element_(element_->IsPseudoElement() ? element_ : nullptr),
       element_link_state_(GetLinkStateForElement(element)),

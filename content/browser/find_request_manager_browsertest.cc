@@ -1233,7 +1233,8 @@ class FindTestWebContentsPrerenderingDelegate
     : public FindTestWebContentsDelegate {
  public:
   PreloadingEligibility IsPrerender2Supported(
-      WebContents& web_contents) override {
+      WebContents& web_contents,
+      PreloadingTriggerType trigger_type) override {
     return PreloadingEligibility::kEligible;
   }
 };
@@ -1649,7 +1650,7 @@ INSTANTIATE_TEST_SUITE_P(
 // hasn't finished the find-in-page session to the new document.
 // TODO(crbug.com/40220234): Fix flakiness and reenable the test.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || \
-    BUILDFLAG(IS_ANDROID)
+    BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 #define MAYBE_NavigateFrameDuringFind DISABLED_NavigateFrameDuringFind
 #else
 #define MAYBE_NavigateFrameDuringFind NavigateFrameDuringFind

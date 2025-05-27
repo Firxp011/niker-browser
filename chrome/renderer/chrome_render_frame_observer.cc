@@ -9,6 +9,7 @@
 
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 #include <utility>
 
@@ -69,6 +70,7 @@
 
 #if !BUILDFLAG(IS_ANDROID)
 #include "chrome/renderer/accessibility/read_anything/read_anything_app_controller.h"
+#include "chrome/renderer/actor/tool_executor.h"
 #include "chrome/renderer/searchbox/searchbox_extension.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
@@ -610,6 +612,15 @@ void ChromeRenderFrameObserver::SetSupportsDraggableRegions(
 void ChromeRenderFrameObserver::SetShouldDeferMediaLoad(bool should_defer) {
   prerender::SetShouldDeferMediaLoad(render_frame(), should_defer);
 }
+
+#if !BUILDFLAG(IS_ANDROID)
+void ChromeRenderFrameObserver::InvokeTool(
+    actor::mojom::ToolInvocationPtr request,
+    InvokeToolCallback callback) {
+  actor::ToolExecutor executor(render_frame());
+  executor.InvokeTool(std::move(request), std::move(callback));
+}
+#endif
 
 void ChromeRenderFrameObserver::SetClientSidePhishingDetection() {
 #if BUILDFLAG(SAFE_BROWSING_AVAILABLE)

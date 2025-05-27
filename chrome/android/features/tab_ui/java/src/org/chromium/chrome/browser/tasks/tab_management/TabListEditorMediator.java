@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.chrome.browser.tasks.tab_management.TabListEditorActionProperties.DESTROYABLE;
+
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.view.View;
@@ -13,6 +15,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.chromium.base.ValueChangedCallback;
+import org.chromium.base.lifetime.Destroyable;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.chrome.R;
@@ -23,6 +26,7 @@ import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tab_ui.RecyclerViewPosition;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
+import org.chromium.chrome.browser.tasks.tab_management.TabListEditorCoordinator.CreationMode;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorCoordinator.LifecycleObserver;
 import org.chromium.chrome.browser.tasks.tab_management.TabProperties.TabActionState;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiMetricsHelper.TabListEditorExitMetricGroups;
@@ -31,7 +35,6 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.desktop_windowing.AppHeaderState;
 import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager;
 import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager.AppHeaderObserver;
-import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.browser_ui.widget.selectable_list.SelectionDelegate;
 import org.chromium.ui.modelutil.ListModelChangeProcessor;
 import org.chromium.ui.modelutil.PropertyKey;
@@ -40,6 +43,7 @@ import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.util.TokenHolder;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -57,22 +61,24 @@ class TabListEditorMediator
     private final @NonNull ValueChangedCallback<TabGroupModelFilter> mOnTabGroupModelFilterChanged =
             new ValueChangedCallback<>(this::onTabGroupModelFilterChanged);
     private final PropertyModel mModel;
-    private final SelectionDelegate<Integer> mSelectionDelegate;
+    private final SelectionDelegate<TabListEditorItemSelectionId> mSelectionDelegate;
     private final boolean mActionOnRelatedTabs;
     private final TabModelObserver mTabModelObserver;
     private final ObservableSupplierImpl<Boolean> mBackPressChangedSupplier =
             new ObservableSupplierImpl<>();
     private final List<Tab> mVisibleTabs = new ArrayList<>();
+    private final List<String> mVisibleTabGroups = new ArrayList<>();
     private final TabListEditorLayout mTabListEditorLayout;
     private final @Nullable DesktopWindowStateManager mDesktopWindowStateManager;
+    private final @CreationMode int mCreationMode;
 
     private @Nullable TabListCoordinator mTabListCoordinator;
     private @Nullable TabListEditorCoordinator.ResetHandler mResetHandler;
-    private PropertyListModel<PropertyModel, PropertyKey> mActionListModel;
+    private @Nullable PropertyListModel<PropertyModel, PropertyKey> mActionListModel;
     private ListModelChangeProcessor mActionChangeProcessor;
     private TabListEditorMenu mTabListEditorMenu;
-    private SnackbarManager mSnackbarManager;
-    private BottomSheetController mBottomSheetController;
+    private final SnackbarManager mSnackbarManager;
+    private final BottomSheetController mBottomSheetController;
     private TabListEditorToolbar mTabListEditorToolbar;
     private TabListEditorCoordinator.NavigationProvider mNavigationProvider;
     private @TabActionState int mTabActionState;
@@ -91,13 +97,14 @@ class TabListEditorMediator
             Context context,
             @NonNull ObservableSupplier<TabGroupModelFilter> currentTabGroupModelFilterSupplier,
             PropertyModel model,
-            SelectionDelegate<Integer> selectionDelegate,
+            SelectionDelegate<TabListEditorItemSelectionId> selectionDelegate,
             boolean actionOnRelatedTabs,
             SnackbarManager snackbarManager,
             BottomSheetController bottomSheetController,
             TabListEditorLayout tabListEditorLayout,
             @TabActionState int initialTabActionState,
-            @Nullable DesktopWindowStateManager desktopWindowStateManager) {
+            @Nullable DesktopWindowStateManager desktopWindowStateManager,
+            @CreationMode int creationMode) {
         mContext = context;
         mCurrentTabGroupModelFilterSupplier = currentTabGroupModelFilterSupplier;
         mModel = model;
@@ -108,6 +115,7 @@ class TabListEditorMediator
         mTabListEditorLayout = tabListEditorLayout;
         mTabActionState = initialTabActionState;
         mDesktopWindowStateManager = desktopWindowStateManager;
+        mCreationMode = creationMode;
 
         mTabModelObserver =
                 new TabModelObserver() {
@@ -126,6 +134,7 @@ class TabListEditorMediator
                         // force hiding the selection editor.
                         if (type == TabLaunchType.FROM_RESTORE
                                 || type == TabLaunchType.FROM_REPARENTING
+                                || type == TabLaunchType.FROM_REPARENTING_BACKGROUND
                                 || type == TabLaunchType.FROM_STARTUP) {
                             mNavigationProvider.goBack();
                         }
@@ -173,10 +182,14 @@ class TabListEditorMediator
     }
 
     private void updateColors(boolean isIncognito) {
-        @ColorInt int primaryColor = ChromeColors.getPrimaryBackgroundColor(mContext, isIncognito);
+        @ColorInt
+        int primaryColor =
+                TabUiThemeProvider.getTabGridDialogBackgroundColor(
+                        mContext, isIncognito, mCreationMode);
         @ColorInt
         int toolbarBackgroundColor =
-                TabUiThemeProvider.getTabSelectionToolbarBackground(mContext, isIncognito);
+                TabUiThemeProvider.getTabSelectionToolbarBackground(
+                        mContext, isIncognito, mCreationMode);
         ColorStateList toolbarTintColorList =
                 TabUiThemeProvider.getTabSelectionToolbarIconTintList(mContext, isIncognito);
 
@@ -204,17 +217,20 @@ class TabListEditorMediator
         if (mActionOnRelatedTabs) {
             mModel.set(
                     TabListEditorProperties.RELATED_TAB_COUNT_PROVIDER,
-                    (tabIdList) -> {
+                    (itemIdList) -> {
                         return TabListEditorAction.getTabCountIncludingRelatedTabs(
-                                mCurrentTabGroupModelFilterSupplier.get(), tabIdList);
+                                mCurrentTabGroupModelFilterSupplier.get(), itemIdList);
                     });
         }
-        updateColors(mCurrentTabGroupModelFilterSupplier.get().isIncognito());
+        updateColors(mCurrentTabGroupModelFilterSupplier.get().getTabModel().isIncognito());
     }
 
     /** {@link TabListEditorCoordinator.TabListEditorController} implementation. */
     @Override
-    public void show(List<Tab> tabs, @Nullable RecyclerViewPosition recyclerViewPosition) {
+    public void show(
+            List<Tab> tabs,
+            List<String> tabGroupSyncIds,
+            @Nullable RecyclerViewPosition recyclerViewPosition) {
         assert mNavigationProvider != null : "NavigationProvider must be set before calling #show";
         // Reparent the snackbarManager to use the selection editor layout to avoid layering issues.
         mSnackbarOverrideToken =
@@ -227,15 +243,17 @@ class TabListEditorMediator
         mTabListCoordinator.prepareTabGridView();
         mVisibleTabs.clear();
         mVisibleTabs.addAll(tabs);
-        mSelectionDelegate.setSelectionModeEnabledForZeroItems(true);
+        mVisibleTabGroups.clear();
+        mVisibleTabGroups.addAll(tabGroupSyncIds);
 
-        mResetHandler.resetWithListOfTabs(tabs, recyclerViewPosition, /* quickMode= */ false);
+        mResetHandler.resetWithListOfTabs(
+                tabs, tabGroupSyncIds, recyclerViewPosition, /* quickMode= */ false);
 
         mModel.set(TabListEditorProperties.IS_VISIBLE, true);
         mModel.set(
                 TabListEditorProperties.TOOLBAR_TITLE,
                 mContext.getString(R.string.tab_selection_editor_toolbar_select_tabs));
-        updateColors(mCurrentTabGroupModelFilterSupplier.get().isIncognito());
+        updateColors(mCurrentTabGroupModelFilterSupplier.get().getTabModel().isIncognito());
     }
 
     @Override
@@ -255,6 +273,7 @@ class TabListEditorMediator
             mActionListModel.addObserver(mActionChangeProcessor);
         }
 
+        runListDestroyables();
         mActionListModel.clear();
         for (TabListEditorAction action : actions) {
             action.configure(
@@ -265,7 +284,7 @@ class TabListEditorMediator
             mActionListModel.add(action.getPropertyModel());
         }
 
-        updateColors(mCurrentTabGroupModelFilterSupplier.get().isIncognito());
+        updateColors(mCurrentTabGroupModelFilterSupplier.get().getTabModel().isIncognito());
     }
 
     @Override
@@ -318,8 +337,12 @@ class TabListEditorMediator
         }
         mTabListCoordinator.cleanupTabGridView();
         mVisibleTabs.clear();
+        mVisibleTabGroups.clear();
         mResetHandler.resetWithListOfTabs(
-                null, /* recyclerViewPosition= */ null, /* quickMode= */ false);
+                /* tabs= */ null,
+                /* tabGroupSyncIds= */ null,
+                /* recyclerViewPosition= */ null,
+                /* quickMode= */ false);
         mModel.set(TabListEditorProperties.IS_VISIBLE, false);
         mResetHandler.postHiding();
         if (mLifecycleObserver != null) mLifecycleObserver.didHide();
@@ -328,6 +351,11 @@ class TabListEditorMediator
     @Override
     public boolean isVisible() {
         return isEditorVisible();
+    }
+
+    @Override
+    public boolean needsCleanUp() {
+        return false;
     }
 
     @Override
@@ -355,28 +383,29 @@ class TabListEditorMediator
 
     @Override
     public void selectAll() {
-        Set<Integer> selectedTabIds = mSelectionDelegate.getSelectedItems();
+        Set<TabListEditorItemSelectionId> selectedItemIds = mSelectionDelegate.getSelectedItems();
         for (Tab tab : mVisibleTabs) {
-            selectedTabIds.add(tab.getId());
+            selectedItemIds.add(TabListEditorItemSelectionId.createTabId(tab.getId()));
         }
-        mSelectionDelegate.setSelectedItems(selectedTabIds);
-        mResetHandler.resetWithListOfTabs(
-                mVisibleTabs, /* recyclerViewPosition= */ null, /* quickMode= */ true);
+        selectTabs(selectedItemIds);
     }
 
     @Override
     public void deselectAll() {
-        Set<Integer> selectedTabIds = mSelectionDelegate.getSelectedItems();
-        selectedTabIds.clear();
-        mSelectionDelegate.setSelectedItems(selectedTabIds);
+        Set<TabListEditorItemSelectionId> selectedItemIds = mSelectionDelegate.getSelectedItems();
+        selectedItemIds.clear();
+        mSelectionDelegate.setSelectedItems(selectedItemIds);
         mResetHandler.resetWithListOfTabs(
-                mVisibleTabs, /* recyclerViewPosition= */ null, /* quickMode= */ true);
+                mVisibleTabs,
+                mVisibleTabGroups.isEmpty() ? null : mVisibleTabGroups,
+                /* recyclerViewPosition= */ null,
+                /* quickMode= */ true);
     }
 
     @Override
     public boolean areAllTabsSelected() {
-        Set<Integer> selectedTabIds = mSelectionDelegate.getSelectedItems();
-        return selectedTabIds.size() == mVisibleTabs.size();
+        Set<TabListEditorItemSelectionId> selectedItemIds = mSelectionDelegate.getSelectedItems();
+        return selectedItemIds.size() == mVisibleTabs.size();
     }
 
     @Override
@@ -395,10 +424,38 @@ class TabListEditorMediator
         mModel.set(TabListEditorProperties.TOP_MARGIN, newState.getAppHeaderHeight());
     }
 
+    @Override
+    public void selectTabs(Set<TabListEditorItemSelectionId> itemIds) {
+        // Protects selection delegate from immutable sets.
+        Set<TabListEditorItemSelectionId> itemIdsModifiable = new HashSet<>(itemIds);
+        mSelectionDelegate.setSelectedItems(itemIdsModifiable);
+        mResetHandler.resetWithListOfTabs(
+                mVisibleTabs,
+                mVisibleTabGroups.isEmpty() ? null : mVisibleTabGroups,
+                /* recyclerViewPosition= */ null,
+                /* quickMode= */ true);
+    }
+
     /** Destroy any members that needs clean up. */
     public void destroy() {
+        runListDestroyables();
+
         removeTabGroupModelFilterObserver(mCurrentTabGroupModelFilterSupplier.get());
         mCurrentTabGroupModelFilterSupplier.removeObserver(mOnTabGroupModelFilterChanged);
+
+        if (mDesktopWindowStateManager != null) {
+            mDesktopWindowStateManager.removeObserver(this);
+        }
+    }
+
+    private void runListDestroyables() {
+        if (mActionListModel == null) return;
+        for (PropertyModel model : mActionListModel) {
+            @Nullable Destroyable destroyable = model.get(DESTROYABLE);
+            if (destroyable != null) {
+                destroyable.destroy();
+            }
+        }
     }
 
     private void onTabGroupModelFilterChanged(
@@ -409,7 +466,7 @@ class TabListEditorMediator
             // Incognito in both light/dark theme is the same as non-incognito mode in dark theme.
             // Non-incognito mode and incognito in both light/dark themes in dark theme all look
             // dark.
-            updateColors(newFilter.isIncognito());
+            updateColors(newFilter.getTabModel().isIncognito());
             newFilter.addObserver(mTabModelObserver);
         }
     }

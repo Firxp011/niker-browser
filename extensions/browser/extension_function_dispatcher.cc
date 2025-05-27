@@ -4,6 +4,7 @@
 
 #include "extensions/browser/extension_function_dispatcher.h"
 
+#include <algorithm>
 #include <optional>
 #include <utility>
 
@@ -19,7 +20,6 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/process.h"
-#include "base/ranges/algorithm.h"
 #include "base/scoped_observation.h"
 #include "base/trace_event/typed_macros.h"
 #include "base/tracing/protos/chrome_track_event.pbzero.h"
@@ -191,7 +191,7 @@ void ExtensionFunctionDispatcher::Dispatch(
     debug::ScopedScriptInjectionTrackerFailureCrashKeys tracker_keys(
         frame, params->extension_id);
     bad_message::ReceivedBadMessage(&process, *bad_message_code);
-    std::move(callback).Run(ExtensionFunction::FAILED, base::Value::List(),
+    std::move(callback).Run(/*kFailed=*/true, base::Value::List(),
                             ToString(*bad_message_code), nullptr);
     return;
   }
@@ -204,9 +204,9 @@ void ExtensionFunctionDispatcher::Dispatch(
              ExtensionFunction::ResponseType type, base::Value::List results,
              const std::string& error,
              mojom::ExtraResponseDataPtr response_data) {
-            std::move(callback).Run(type == ExtensionFunction::SUCCEEDED,
-                                    std::move(results), error,
-                                    std::move(response_data));
+            std::move(callback).Run(
+                type == ExtensionFunction::ResponseType::kSucceeded,
+                std::move(results), error, std::move(response_data));
           },
           std::move(callback)));
 }
@@ -225,8 +225,8 @@ void ExtensionFunctionDispatcher::DispatchForServiceWorker(
   content::RenderProcessHost* rph =
       content::RenderProcessHost::FromID(render_process_id);
   if (!rph) {
-    std::move(callback).Run(ExtensionFunction::FAILED, base::Value::List(),
-                            "No RPH", nullptr);
+    std::move(callback).Run(/*kFailed=*/true, base::Value::List(), "No RPH",
+                            nullptr);
     return;
   }
 
@@ -238,7 +238,7 @@ void ExtensionFunctionDispatcher::DispatchForServiceWorker(
   if (auto bad_message_code = ValidateRequest(*params, nullptr, *rph)) {
     // Kill the renderer if it's an invalid request.
     bad_message::ReceivedBadMessage(render_process_id, *bad_message_code);
-    std::move(callback).Run(ExtensionFunction::FAILED, base::Value::List(),
+    std::move(callback).Run(/*kFailed=*/true, base::Value::List(),
                             ToString(*bad_message_code), nullptr);
     return;
   }
@@ -248,8 +248,8 @@ void ExtensionFunctionDispatcher::DispatchForServiceWorker(
                      params->worker_thread_id};
   // Ignore if the worker has already stopped.
   if (!ProcessManager::Get(browser_context_)->HasServiceWorker(worker_id)) {
-    std::move(callback).Run(ExtensionFunction::FAILED, base::Value::List(),
-                            "No SW", nullptr);
+    std::move(callback).Run(/*kFailed=*/true, base::Value::List(), "No SW",
+                            nullptr);
     return;
   }
 
@@ -260,9 +260,9 @@ void ExtensionFunctionDispatcher::DispatchForServiceWorker(
              ExtensionFunction::ResponseType type, base::Value::List results,
              const std::string& error,
              mojom::ExtraResponseDataPtr response_data) {
-            std::move(callback).Run(type == ExtensionFunction::SUCCEEDED,
-                                    std::move(results), error,
-                                    std::move(response_data));
+            std::move(callback).Run(
+                type == ExtensionFunction::ResponseType::kSucceeded,
+                std::move(results), error, std::move(response_data));
           },
           std::move(callback)));
 }
@@ -276,17 +276,19 @@ void ExtensionFunctionDispatcher::DispatchWithCallbackInternal(
   if (!process_map) {
     constexpr char kProcessNotFound[] =
         "The process for the extension is not found.";
-    ResponseCallbackOnError(std::move(callback), ExtensionFunction::FAILED,
+    ResponseCallbackOnError(std::move(callback),
+                            ExtensionFunction::ResponseType::kFailed,
                             kProcessNotFound);
     return;
   }
 
-  const int render_process_id = render_process_host.GetID();
+  const int render_process_id = render_process_host.GetDeprecatedID();
 
   const GURL* render_frame_host_url = nullptr;
   if (render_frame_host) {
     render_frame_host_url = &render_frame_host->GetLastCommittedURL();
-    DCHECK_EQ(render_process_id, render_frame_host->GetProcess()->GetID());
+    DCHECK_EQ(render_process_id,
+              render_frame_host->GetProcess()->GetDeprecatedID());
   }
 
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context_);
@@ -310,7 +312,8 @@ void ExtensionFunctionDispatcher::DispatchWithCallbackInternal(
     // (privileged extension contexts in web processes).
     static constexpr char kInvalidContextType[] =
         "Invalid context type provided.";
-    ResponseCallbackOnError(std::move(callback), ExtensionFunction::FAILED,
+    ResponseCallbackOnError(std::move(callback),
+                            ExtensionFunction::ResponseType::kFailed,
                             kInvalidContextType);
     return;
   }
@@ -323,7 +326,8 @@ void ExtensionFunctionDispatcher::DispatchWithCallbackInternal(
         !render_frame_host_url->SchemeIs(content::kChromeUIUntrustedScheme)) {
       constexpr char kInvalidWebUiUntrustedContext[] =
           "Context indicated it was untrusted webui, but is invalid.";
-      ResponseCallbackOnError(std::move(callback), ExtensionFunction::FAILED,
+      ResponseCallbackOnError(std::move(callback),
+                              ExtensionFunction::ResponseType::kFailed,
                               kInvalidWebUiUntrustedContext);
       return;
     }
@@ -503,8 +507,7 @@ ExtensionFunctionDispatcher::GetAssociatedWebContents() const {
 
 content::WebContents*
 ExtensionFunctionDispatcher::GetVisibleWebContents() const {
-  return delegate_ ? delegate_->GetVisibleWebContents() :
-      GetAssociatedWebContents();
+  return delegate_ ? delegate_->GetVisibleWebContents() : nullptr;
 }
 
 void ExtensionFunctionDispatcher::AddResponseTarget(ExtensionFunction* func) {
@@ -513,7 +516,7 @@ void ExtensionFunctionDispatcher::AddResponseTarget(ExtensionFunction* func) {
 
 void ExtensionFunctionDispatcher::ProcessResponseAck(
     const base::Uuid& request_uuid) {
-  auto iter = base::ranges::find_if(
+  auto iter = std::ranges::find_if(
       response_targets_, [request_uuid](ExtensionFunction* function) {
         return function->request_uuid() == request_uuid;
       });
@@ -543,7 +546,8 @@ ExtensionFunctionDispatcher::CreateExtensionFunction(
       ExtensionFunctionRegistry::GetInstance().NewFunction(params.name);
   if (!function) {
     LOG(ERROR) << "Unknown Extension API - " << params.name;
-    ResponseCallbackOnError(std::move(callback), ExtensionFunction::FAILED,
+    ResponseCallbackOnError(std::move(callback),
+                            ExtensionFunction::ResponseType::kFailed,
                             kCreationFailed);
     return nullptr;
   }

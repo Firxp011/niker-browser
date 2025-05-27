@@ -10,16 +10,21 @@
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "chrome/browser/extensions/window_controller.h"
+
+#if !BUILDFLAG(IS_ANDROID)
+// gn check doesn't understand this conditional, hence the nogncheck directives
+// below.
 #include "base/types/expected.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/window_controller.h"
 #include "chrome/common/extensions/api/tab_groups.h"
 #include "chrome/common/extensions/api/tabs.h"
-#include "components/tab_groups/tab_group_color.h"
-#include "components/tab_groups/tab_group_id.h"
+#include "components/tab_groups/tab_group_color.h"  // nogncheck
+#include "components/tab_groups/tab_group_id.h"     // nogncheck
 #include "extensions/common/features/feature.h"
 #include "extensions/common/mojom/context_type.mojom-forward.h"
 #include "ui/base/window_open_disposition.h"
+#endif
 
 class Browser;
 class ChromeExtensionFunctionDetails;
@@ -48,6 +53,9 @@ class WindowController;
 // Provides various utility functions that help manipulate tabs.
 class ExtensionTabUtil {
  public:
+#if !BUILDFLAG(IS_ANDROID)
+  // This file is slowly being ported to Android. For now, most of it is
+  // ifdef'd out.
   static constexpr char kNoCrashBrowserError[] =
       "I'm sorry. I'm afraid I can't do that.";
   static constexpr char kCanOnlyMoveTabsWithinNormalWindowsError[] =
@@ -98,13 +106,14 @@ class ExtensionTabUtil {
     std::optional<int> opener_tab_id;
     std::optional<std::string> url;
     std::optional<bool> active;
+    std::optional<bool> split;
     std::optional<bool> pinned;
     std::optional<int> index;
     std::optional<int> bookmark_id;
   };
 
-  // Opens a new tab given an extension function |function| and creation
-  // parameters |params|. If a tab can be produced, it will return a
+  // Opens a new tab given an extension function `function` and creation
+  // parameters `params`. If a tab can be produced, it will return a
   // base::Value::Dict representing the tab, otherwise it will optionally return
   // an error message, if any is appropriate.
   static base::expected<base::Value::Dict, std::string> OpenTab(
@@ -114,7 +123,11 @@ class ExtensionTabUtil {
 
   static int GetWindowId(const Browser* browser);
   static int GetWindowIdOfTabStripModel(const TabStripModel* tab_strip_model);
+#endif  // !BUILDFLAG(IS_ANDROID)
+
   static int GetTabId(const content::WebContents* web_contents);
+
+#if !BUILDFLAG(IS_ANDROID)
   static int GetWindowIdOfTab(const content::WebContents* web_contents);
   static base::Value::List CreateTabList(const Browser* browser,
                                          const Extension* extension,
@@ -135,13 +148,13 @@ class ExtensionTabUtil {
       bool also_match_incognito_profile,
       std::string* error_message);
 
-  // Returns the tabs:: API constant for the window type of the |browser|.
+  // Returns the tabs:: API constant for the window type of the `browser`.
   static std::string GetBrowserWindowTypeText(const Browser& browser);
 
   // Creates a Tab object (see chrome/common/extensions/api/tabs.json) with
-  // information about the state of a browser tab for the given |web_contents|.
+  // information about the state of a browser tab for the given `web_contents`.
   // This will scrub the tab of sensitive data (URL, favicon, title) according
-  // to |scrub_tab_behavior| and |extension|'s permissions. A null extension is
+  // to `scrub_tab_behavior` and `extension`'s permissions. A null extension is
   // treated as having no permissions.
   // By default, tab information should always be scrubbed (kScrubTab) for any
   // data passed to any extension.
@@ -158,9 +171,9 @@ class ExtensionTabUtil {
                                         int tab_index);
 
   // Creates a base::Value::Dict representing the window for the given
-  // |browser|, and scrubs any privacy-sensitive data that |extension| does not
-  // have access to. |populate_tab_behavior| determines whether tabs will be
-  // populated in the result. |context| is used to determine the
+  // `browser`, and scrubs any privacy-sensitive data that `extension` does not
+  // have access to. `populate_tab_behavior` determines whether tabs will be
+  // populated in the result. `context` is used to determine the
   // ScrubTabBehavior for the populated tabs data.
   // TODO(devlin): Convert this to a api::Windows::Window object.
   static base::Value::Dict CreateWindowValueForExtension(
@@ -193,7 +206,7 @@ class ExtensionTabUtil {
                                    api::tabs::Tab* tab,
                                    ScrubTabBehavior scrub_tab_behavior);
 
-  // Gets the |tab_strip_model| and |tab_index| for the given |web_contents|.
+  // Gets the `tab_strip_model` and `tab_index` for the given `web_contents`.
   static bool GetTabStripModel(const content::WebContents* web_contents,
                                TabStripModel** tab_strip_model,
                                int* tab_index);
@@ -201,6 +214,7 @@ class ExtensionTabUtil {
   // Returns the active tab's WebContents if there is an active tab. Returns
   // null if there is no active tab.
   static content::WebContents* GetActiveTab(Browser* browser);
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   // Any out parameter (`window`, `contents`, & `tab_index`) may be null.
   //
@@ -217,6 +231,7 @@ class ExtensionTabUtil {
                          bool include_incognito,
                          content::WebContents** contents);
 
+#if !BUILDFLAG(IS_ANDROID)
   // Gets the extensions-specific Group ID.
   static int GetGroupId(const tab_groups::TabGroupId& id);
 
@@ -233,6 +248,9 @@ class ExtensionTabUtil {
                            tab_groups::TabGroupId* id,
                            const tab_groups::TabGroupVisualData** visual_data,
                            std::string* error);
+
+  // Returns whether the group is shared or not.
+  static bool GetSharedStateOfGroup(const tab_groups::TabGroupId& id);
 
   // Creates a TabGroup object
   // (see chrome/common/extensions/api/tab_groups.json) with information about
@@ -251,20 +269,20 @@ class ExtensionTabUtil {
   static tab_groups::TabGroupColorId ColorToColorId(
       api::tab_groups::Color color);
 
-  // Returns all active web contents for the given |browser_context|.
+  // Returns all active web contents for the given `browser_context`.
   static std::vector<content::WebContents*> GetAllActiveWebContentsForContext(
       content::BrowserContext* browser_context,
       bool include_incognito);
 
-  // Determines if the |web_contents| is in |browser_context| or it's OTR
-  // BrowserContext if |include_incognito| is true.
+  // Determines if the `web_contents` is in `browser_context` or it's OTR
+  // BrowserContext if `include_incognito` is true.
   static bool IsWebContentsInContext(content::WebContents* web_contents,
                                      content::BrowserContext* browser_context,
                                      bool include_incognito);
 
-  // Takes |url_string| and returns a GURL which is either valid and absolute
-  // or invalid. If |url_string| is not directly interpretable as a valid (it is
-  // likely a relative URL) an attempt is made to resolve it. When |extension|
+  // Takes `url_string` and returns a GURL which is either valid and absolute
+  // or invalid. If `url_string` is not directly interpretable as a valid (it is
+  // likely a relative URL) an attempt is made to resolve it. When `extension`
   // is non-null, the URL is resolved relative to its extension base
   // (chrome-extension://<id>/). Using the source frame url would be more
   // correct, but because the api shipped with urls resolved relative to their
@@ -273,11 +291,11 @@ class ExtensionTabUtil {
   static GURL ResolvePossiblyRelativeURL(const std::string& url_string,
                                          const Extension* extension);
 
-  // Returns true if navigating to |url| could kill a page or the browser
+  // Returns true if navigating to `url` could kill a page or the browser
   // itself, whether by simulating a crash, browser quit, thread hang, or
   // equivalent. Extensions should be prevented from navigating to such URLs.
   //
-  // The caller should ensure that |url| has already been "fixed up" by calling
+  // The caller should ensure that `url` has already been "fixed up" by calling
   // url_formatter::FixupURL.
   static bool IsKillURL(const GURL& url);
 
@@ -288,17 +306,19 @@ class ExtensionTabUtil {
       const Extension* extension,
       content::BrowserContext* browser_context);
 
-  // Opens a tab for the specified |web_contents|.
+  // Opens a tab for the specified `web_contents`.
   static void CreateTab(std::unique_ptr<content::WebContents> web_contents,
                         const std::string& extension_id,
                         WindowOpenDisposition disposition,
                         const blink::mojom::WindowFeatures& window_features,
                         bool user_gesture);
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   // Executes the specified callback for all tabs in all browser windows.
   static void ForEachTab(
       base::RepeatingCallback<void(content::WebContents*)> callback);
 
+#if !BUILDFLAG(IS_ANDROID)
   static WindowController* GetWindowControllerOfTab(
       const content::WebContents* web_contents);
 
@@ -318,15 +338,17 @@ class ExtensionTabUtil {
   // Example of Browsers which don't support tabs include apps and devtools.
   static bool BrowserSupportsTabs(Browser* browser);
 
-  // Determines the loading status of the given |contents|. This needs to access
-  // some non-const member functions of |contents|, but actually leaves it
+  // Determines the loading status of the given `contents`. This needs to access
+  // some non-const member functions of `contents`, but actually leaves it
   // unmodified.
   static api::tabs::TabStatus GetLoadingStatus(content::WebContents* contents);
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   // Clears the back-forward cache for all active tabs across all browser
   // contexts.
   static void ClearBackForwardCache();
 
+#if !BUILDFLAG(IS_ANDROID)
   // Check TabStripModel editability in every browser because a drag session
   // could be running in another browser that reverts to the current browser. Or
   // a drag could be mid-handoff if from one browser to another.
@@ -337,6 +359,7 @@ class ExtensionTabUtil {
 
   static bool TabIsInSavedTabGroup(content::WebContents* contents,
                                    TabStripModel* tab_strip_model);
+#endif  // !BUILDFLAG(IS_ANDROID)
 };
 
 }  // namespace extensions

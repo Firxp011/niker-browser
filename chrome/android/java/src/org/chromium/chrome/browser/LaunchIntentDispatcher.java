@@ -19,10 +19,7 @@ import android.provider.MediaStore;
 import android.text.TextUtils;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.OptIn;
-import androidx.browser.auth.ExperimentalAuthTab;
 import androidx.browser.customtabs.CustomTabsIntent;
-import androidx.browser.customtabs.CustomTabsSessionToken;
 import androidx.browser.customtabs.TrustedWebUtils;
 import androidx.core.os.BuildCompat;
 
@@ -34,12 +31,12 @@ import org.chromium.base.Log;
 import org.chromium.base.PackageManagerUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.browserservices.SessionDataHolder;
+import org.chromium.chrome.browser.browserservices.intents.SessionHolder;
 import org.chromium.chrome.browser.browserservices.ui.splashscreen.trustedwebactivity.TwaSplashController;
 import org.chromium.chrome.browser.customtabs.AuthTabIntentDataProvider;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
 import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
-import org.chromium.chrome.browser.customtabs.IncognitoCustomTabIntentDataProvider;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.firstrun.FirstRunFlowSequencer;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -76,7 +73,7 @@ public class LaunchIntentDispatcher {
     private static final String TAG = "ActivityDispatcher";
 
     private final Activity mActivity;
-    private Intent mIntent;
+    private final Intent mIntent;
 
     @IntDef({Action.CONTINUE, Action.FINISH_ACTIVITY, Action.FINISH_ACTIVITY_REMOVE_TASK})
     @Retention(RetentionPolicy.SOURCE)
@@ -155,9 +152,9 @@ public class LaunchIntentDispatcher {
     }
 
     /**
-     * Figure out how to route the Intent.  Because this is on the critical path to startup, please
-     * avoid making the pathway any more complicated than it already is.  Make sure that anything
-     * you add _absolutely has_ to be here.
+     * Figure out how to route the Intent. Because this is on the critical path to startup, please
+     * avoid making the pathway any more complicated than it already is. Make sure that anything you
+     * add _absolutely has_ to be here.
      */
     private @Action int dispatch() {
         // Read partner browser customizations information asynchronously.
@@ -199,7 +196,7 @@ public class LaunchIntentDispatcher {
         }
 
         // Check if we should push the user through First Run.
-        if (FirstRunFlowSequencer.launch(mActivity, mIntent, /* preferLightweightFre= */ false)) {
+        if (FirstRunFlowSequencer.launch(mActivity, mIntent)) {
             return Action.FINISH_ACTIVITY;
         }
 
@@ -217,6 +214,7 @@ public class LaunchIntentDispatcher {
         return dispatchToTabbedActivity();
     }
 
+    @SuppressWarnings(value = "UnsafeImplicitIntentLaunch")
     private boolean processWebSearchIntent(Intent intent) {
         if (intent == null) return false;
 
@@ -263,7 +261,6 @@ public class LaunchIntentDispatcher {
     /**
      * @return Whether the intent is for launching a Custom Tab.
      */
-    @OptIn(markerClass = ExperimentalAuthTab.class)
     public static boolean isCustomTabIntent(Intent intent) {
         if (intent == null) return false;
         Log.w(
@@ -366,8 +363,7 @@ public class LaunchIntentDispatcher {
      */
     private boolean launchCustomTabActivity() {
         CustomTabsConnection.getInstance()
-                .onHandledIntent(
-                        CustomTabsSessionToken.getSessionTokenFromIntent(mIntent), mIntent);
+                .onHandledIntent(SessionHolder.getSessionHolderFromIntent(mIntent), mIntent);
 
         boolean isCustomTab = true;
         if (IntentHandler.shouldIgnoreIntent(mIntent, mActivity, isCustomTab)) {
@@ -382,6 +378,8 @@ public class LaunchIntentDispatcher {
             if (handled) return true;
         }
 
+        // Should not be set by external apps, remove if present.
+        mIntent.removeExtra(IntentHandler.EXTRA_CCT_EARLY_NAV);
         boolean startedNavigationEarly = maybeStartNavigation();
         RecordHistogram.recordBooleanHistogram(
                 "CustomTabs.Startup.StartedNavigationEarly", startedNavigationEarly);
@@ -399,8 +397,6 @@ public class LaunchIntentDispatcher {
         if (packageName != null) {
             intent.putExtra(IntentHandler.EXTRA_CALLING_ACTIVITY_PACKAGE, packageName);
         }
-
-        if (startedNavigationEarly) intent.putExtra(IntentHandler.EXTRA_SKIP_PRECONNECT, true);
 
         // Pass the package name obtained via identity sharing API separately from the one
         // obtained via startActivityForResult.
@@ -429,10 +425,7 @@ public class LaunchIntentDispatcher {
     private boolean maybeStartNavigation() {
         if (!WarmupManager.getInstance().isCctPrewarmTabFeatureEnabled(false)) return false;
         if (!ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_EARLY_NAV)) return false;
-        if (IncognitoCustomTabIntentDataProvider.isValidIncognitoIntent(
-                mIntent, /* recordMetrics= */ false)) {
-            return false;
-        }
+        if (IntentHandler.willLaunchIncognitoCustomTab(mIntent)) return false;
         if (!ProfileManager.isInitialized()) return false;
         if (clearTopIntentsForCustomTabsEnabled(mIntent)
                 && SessionDataHolder.getInstance()

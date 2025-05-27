@@ -28,6 +28,7 @@
 #include <optional>
 
 #include "base/metrics/histogram_functions.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 #include "third_party/blink/public/common/scheduler/task_attribution_id.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-shared.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
@@ -52,9 +53,32 @@
 #include "third_party/blink/renderer/platform/scheduler/public/task_attribution_tracker.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 
 namespace blink {
+
+namespace {
+
+void MaybeRecordUkm(LocalDOMWindow* window,
+                    bool is_history_modifying_operation) {
+  if (!window || !window->GetFrame()) {
+    return;
+  }
+
+  bool has_sticky_user_activation =
+      window->GetFrame()->HasStickyUserActivation();
+  bool from_ad = window->GetFrame()->IsAdScriptInStack() ||
+                 window->GetFrame()->IsAdFrame();
+
+  ukm::builders::HistoryApi(window->UkmSourceID())
+      .SetIsHistoryModifyingOperation(is_history_modifying_operation)
+      .SetHasStickyUserActivation(has_sticky_user_activation)
+      .SetFromAd(from_ad)
+      .Record(window->UkmRecorder());
+}
+
+}  // namespace
 
 History::History(LocalDOMWindow* window)
     : ExecutionContextClient(window), last_state_object_requested_(nullptr) {}
@@ -65,6 +89,8 @@ void History::Trace(Visitor* visitor) const {
 }
 
 unsigned History::length(ExceptionState& exception_state) const {
+  MaybeRecordUkm(DomWindow(), /*is_history_modifying_operation=*/false);
+
   if (!DomWindow()) {
     exception_state.ThrowSecurityError(
         "May not use a History object associated with a Document that is not "
@@ -77,42 +103,9 @@ unsigned History::length(ExceptionState& exception_state) const {
 
 ScriptValue History::state(ScriptState* script_state,
                            ExceptionState& exception_state) {
-  v8::Isolate* isolate = script_state->GetIsolate();
-  static const V8PrivateProperty::SymbolKey kHistoryStatePrivateProperty;
-  auto private_prop =
-      V8PrivateProperty::GetSymbol(isolate, kHistoryStatePrivateProperty);
-  v8::Local<v8::Object> v8_history =
-      ToV8Traits<History>::ToV8(script_state, this)
-          .As<v8::Object>();
-  v8::Local<v8::Value> v8_state;
+  MaybeRecordUkm(DomWindow(), /*is_history_modifying_operation=*/false);
 
-  // Returns the same V8 value unless the history gets updated.  This
-  // implementation is mostly the same as the one of [CachedAttribute], but
-  // it's placed in this function rather than in Blink-V8 bindings layer so
-  // that PopStateEvent.state can also access the same V8 value.
-  scoped_refptr<SerializedScriptValue> current_state = StateInternal();
-  if (last_state_object_requested_ == current_state) {
-    if (!private_prop.GetOrUndefined(v8_history).ToLocal(&v8_state))
-      return ScriptValue::CreateNull(isolate);
-    if (!v8_state->IsUndefined())
-      return ScriptValue(isolate, v8_state);
-  }
-
-  if (!DomWindow()) {
-    exception_state.ThrowSecurityError(
-        "May not use a History object associated with a Document that is "
-        "not fully active");
-    v8_state = v8::Null(isolate);
-  } else if (!current_state) {
-    v8_state = v8::Null(isolate);
-  } else {
-    ScriptState::EscapableScope target_context_scope(script_state);
-    v8_state = target_context_scope.Escape(current_state->Deserialize(isolate));
-  }
-
-  last_state_object_requested_ = current_state;
-  private_prop.Set(v8_history, v8_state);
-  return ScriptValue(isolate, v8_state);
+  return StateHelper(script_state, exception_state);
 }
 
 SerializedScriptValue* History::StateInternal() const {
@@ -123,6 +116,8 @@ SerializedScriptValue* History::StateInternal() const {
 
 void History::setScrollRestoration(const V8ScrollRestoration& value,
                                    ExceptionState& exception_state) {
+  MaybeRecordUkm(DomWindow(), /*is_history_modifying_operation=*/false);
+
   HistoryItem* item = GetHistoryItem();
   if (!item) {
     exception_state.ThrowSecurityError(
@@ -144,6 +139,8 @@ void History::setScrollRestoration(const V8ScrollRestoration& value,
 
 V8ScrollRestoration History::scrollRestoration(
     ExceptionState& exception_state) {
+  MaybeRecordUkm(DomWindow(), /*is_history_modifying_operation=*/false);
+
   if (!DomWindow()) {
     exception_state.ThrowSecurityError(
         "May not use a History object associated with a Document that is not "
@@ -172,6 +169,47 @@ bool History::IsSameAsCurrentState(SerializedScriptValue* state) const {
   return state == StateInternal();
 }
 
+ScriptValue History::StateHelper(ScriptState* script_state,
+                                 ExceptionState& exception_state) {
+  v8::Isolate* isolate = script_state->GetIsolate();
+  static const V8PrivateProperty::SymbolKey kHistoryStatePrivateProperty;
+  auto private_prop =
+      V8PrivateProperty::GetSymbol(isolate, kHistoryStatePrivateProperty);
+  v8::Local<v8::Object> v8_history =
+      ToV8Traits<History>::ToV8(script_state, this).As<v8::Object>();
+  v8::Local<v8::Value> v8_state;
+
+  // Returns the same V8 value unless the history gets updated.  This
+  // implementation is mostly the same as the one of [CachedAttribute], but
+  // it's placed in this function rather than in Blink-V8 bindings layer so
+  // that PopStateEvent.state can also access the same V8 value.
+  scoped_refptr<SerializedScriptValue> current_state = StateInternal();
+  if (last_state_object_requested_ == current_state) {
+    if (!private_prop.GetOrUndefined(v8_history).ToLocal(&v8_state)) {
+      return ScriptValue::CreateNull(isolate);
+    }
+    if (!v8_state->IsUndefined()) {
+      return ScriptValue(isolate, v8_state);
+    }
+  }
+
+  if (!DomWindow()) {
+    exception_state.ThrowSecurityError(
+        "May not use a History object associated with a Document that is "
+        "not fully active");
+    v8_state = v8::Null(isolate);
+  } else if (!current_state) {
+    v8_state = v8::Null(isolate);
+  } else {
+    ScriptState::EscapableScope target_context_scope(script_state);
+    v8_state = target_context_scope.Escape(current_state->Deserialize(isolate));
+  }
+
+  last_state_object_requested_ = current_state;
+  private_prop.Set(v8_history, v8_state);
+  return ScriptValue(isolate, v8_state);
+}
+
 void History::back(ScriptState* script_state, ExceptionState& exception_state) {
   go(script_state, -1, exception_state);
 }
@@ -184,6 +222,8 @@ void History::forward(ScriptState* script_state,
 void History::go(ScriptState* script_state,
                  int delta,
                  ExceptionState& exception_state) {
+  MaybeRecordUkm(DomWindow(), /*is_history_modifying_operation=*/true);
+
   LocalDOMWindow* window = DomWindow();
   if (!window) {
     exception_state.ThrowSecurityError(
@@ -211,7 +251,7 @@ void History::go(ScriptState* script_state,
     // Set up propagating the current task state to the navigation commit.
     std::optional<scheduler::TaskAttributionId> soft_navigation_task_id;
     if (script_state->World().IsMainWorld() && frame->IsOutermostMainFrame()) {
-      if (auto* heuristics = SoftNavigationHeuristics::From(*window)) {
+      if (auto* heuristics = window->GetSoftNavigationHeuristics()) {
         soft_navigation_task_id =
             heuristics->AsyncSameDocumentNavigationStarted();
       }
@@ -235,6 +275,8 @@ void History::pushState(ScriptState* script_state,
                         const String& title,
                         const String& url,
                         ExceptionState& exception_state) {
+  MaybeRecordUkm(DomWindow(), /*is_history_modifying_operation=*/true);
+
   v8::Isolate* isolate = script_state->GetIsolate();
   WebFrameLoadType load_type = WebFrameLoadType::kStandard;
   if (LocalDOMWindow* window = DomWindow()) {
@@ -269,6 +311,8 @@ void History::replaceState(ScriptState* script_state,
                            const String& title,
                            const String& url,
                            ExceptionState& exception_state) {
+  MaybeRecordUkm(DomWindow(), /*is_history_modifying_operation=*/true);
+
   v8::Isolate* isolate = script_state->GetIsolate();
   scoped_refptr<SerializedScriptValue> serialized_data =
       SerializedScriptValue::Serialize(isolate, data.V8Value(),
@@ -324,11 +368,11 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
     // We can safely expose the URL to JavaScript, as a) no redirection takes
     // place: JavaScript already had this URL, b) JavaScript can only access a
     // same-origin History object.
-    exception_state.ThrowSecurityError(
-        "A history state object with URL '" + full_url.ElidedString() +
-        "' cannot be created in a document with origin '" +
-        window->GetSecurityOrigin()->ToString() + "' and URL '" +
-        window->Url().ElidedString() + "'.");
+    exception_state.ThrowSecurityError(WTF::StrCat(
+        {"A history state object with URL '", full_url.ElidedString(),
+         "' cannot be created in a document with origin '",
+         window->GetSecurityOrigin()->ToString(), "' and URL '",
+         window->Url().ElidedString(), "'."}));
     return;
   }
 
@@ -351,9 +395,11 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
     return;
   }
 
+  // Adding a history entry might require a screenshot.
+  constexpr bool should_skip_screenshot = false;
   window->document()->Loader()->RunURLAndHistoryUpdateSteps(
       full_url, nullptr, mojom::blink::SameDocumentNavigationType::kHistoryApi,
-      std::move(data), type, FirePopstate::kNo);
+      std::move(data), type, FirePopstate::kNo, should_skip_screenshot);
 }
 
 }  // namespace blink

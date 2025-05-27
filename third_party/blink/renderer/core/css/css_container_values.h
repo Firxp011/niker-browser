@@ -7,6 +7,7 @@
 
 #include <optional>
 
+#include "third_party/blink/renderer/core/css/container_state.h"
 #include "third_party/blink/renderer/core/css/css_to_length_conversion_data.h"
 #include "third_party/blink/renderer/core/css/media_values_dynamic.h"
 
@@ -14,15 +15,19 @@ namespace blink {
 
 class CORE_EXPORT CSSContainerValues : public MediaValuesDynamic {
  public:
-  explicit CSSContainerValues(Document& document,
-                              Element& container,
-                              std::optional<double> width,
-                              std::optional<double> height,
-                              ContainerStuckPhysical stuck_horizontal,
-                              ContainerStuckPhysical stuck_vertical,
-                              ContainerSnappedFlags snapped,
-                              ContainerOverflowingFlags overflowing_horizontal,
-                              ContainerOverflowingFlags overflowing_vertical);
+  explicit CSSContainerValues(
+      Document& document,
+      Element& container,
+      std::optional<double> width,
+      std::optional<double> height,
+      ContainerStuckPhysical stuck_horizontal,
+      ContainerStuckPhysical stuck_vertical,
+      ContainerSnappedFlags snapped,
+      ContainerScrollableFlags scrollable_horizontal,
+      ContainerScrollableFlags scrollable_vertical,
+      ContainerScrollDirection scroll_direction_horizontal,
+      ContainerScrollDirection scroll_direction_vertical,
+      int anchored_fallback);
 
   // Returns std::nullopt if queries on the relevant axis is not
   // supported.
@@ -44,6 +49,7 @@ class CORE_EXPORT CSSContainerValues : public MediaValuesDynamic {
   float RootLineHeight(float zoom) const override;
   float CapFontSize(float zoom) const override;
   float RcapFontSize(float zoom) const override;
+  Element* GetElement() const override { return element_.Get(); }
   // Note that ContainerWidth/ContainerHeight are used to resolve
   // container *units*. See `container_sizes_`.
   Element* ContainerElement() const override { return element_.Get(); }
@@ -61,14 +67,24 @@ class CORE_EXPORT CSSContainerValues : public MediaValuesDynamic {
   ContainerStuckLogical StuckInline() const override;
   ContainerStuckLogical StuckBlock() const override;
   ContainerSnappedFlags SnappedFlags() const override { return snapped_; }
-  ContainerOverflowingFlags OverflowingHorizontal() const override {
-    return overflowing_horizontal_;
+  ContainerScrollableFlags ScrollableHorizontal() const override {
+    return scrollable_horizontal_;
   }
-  ContainerOverflowingFlags OverflowingVertical() const override {
-    return overflowing_vertical_;
+  ContainerScrollableFlags ScrollableVertical() const override {
+    return scrollable_vertical_;
   }
-  ContainerOverflowingFlags OverflowingInline() const override;
-  ContainerOverflowingFlags OverflowingBlock() const override;
+  ContainerScrollableFlags ScrollableInline() const override;
+  ContainerScrollableFlags ScrollableBlock() const override;
+  ContainerScrollDirection ScrollDirectionHorizontal() const override {
+    return scroll_direction_horizontal_;
+  }
+  ContainerScrollDirection ScrollDirectionVertical() const override {
+    return scroll_direction_vertical_;
+  }
+  ContainerScrollDirection ScrollDirectionInline() const override;
+  ContainerScrollDirection ScrollDirectionBlock() const override;
+
+  int AnchoredFallback() const override { return anchored_fallback_; }
 
  private:
   // The current computed style for the container.
@@ -89,22 +105,22 @@ class CORE_EXPORT CSSContainerValues : public MediaValuesDynamic {
   ContainerSnappedFlags snapped_ =
       static_cast<ContainerSnappedFlags>(ContainerSnapped::kNone);
   // Whether a scroll-state container has horizontally scrollable overflow.
-  ContainerOverflowingFlags overflowing_horizontal_ =
-      static_cast<ContainerOverflowingFlags>(ContainerOverflowing::kNone);
+  ContainerScrollableFlags scrollable_horizontal_ =
+      static_cast<ContainerScrollableFlags>(ContainerScrollable::kNone);
   // Whether a scroll-state container has vertically scrollable overflow.
-  ContainerOverflowingFlags overflowing_vertical_ =
-      static_cast<ContainerOverflowingFlags>(ContainerOverflowing::kNone);
+  ContainerScrollableFlags scrollable_vertical_ =
+      static_cast<ContainerScrollableFlags>(ContainerScrollable::kNone);
+  ContainerScrollDirection scroll_direction_horizontal_ =
+      ContainerScrollDirection::kNone;
+  ContainerScrollDirection scroll_direction_vertical_ =
+      ContainerScrollDirection::kNone;
+  // A 1-based index into position-try-fallbacks applied to an anchored()
+  // container. 0 if no position-try-fallbacks are applied.
+  int anchored_fallback_ = 0;
   // Container font sizes for resolving relative lengths.
   CSSToLengthConversionData::FontSizes font_sizes_;
   // LineHeightSize of the container element.
   CSSToLengthConversionData::LineHeightSize line_height_size_;
-
-  // Both `font_sizes_`, and `line_height_size_` have a pointer to a `Font`
-  // from the computed-style objects. Explicitly own the computed-style objects
-  // here so the underlying `Font` object doesn't get destroyed.
-  Member<const ComputedStyle> font_style_;
-  Member<const ComputedStyle> root_font_style_;
-
   // Used to resolve container-relative units found in the @container prelude.
   // Such units refer to container sizes of *ancestor* containers, and must
   // not be confused with the size of the *current* container (which is stored

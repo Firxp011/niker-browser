@@ -541,6 +541,52 @@ inline CSSValueID PlatformEnumToCSSValueID(TryTactic v) {
   }
 }
 
+template <>
+inline EAnimationTriggerType CssValueIDToPlatformEnum(CSSValueID v) {
+  switch (v) {
+    case CSSValueID::kOnce:
+      return EAnimationTriggerType::kOnce;
+    case CSSValueID::kRepeat:
+      return EAnimationTriggerType::kRepeat;
+    case CSSValueID::kAlternate:
+      return EAnimationTriggerType::kAlternate;
+    case CSSValueID::kState:
+      return EAnimationTriggerType::kState;
+    default:
+      NOTREACHED();
+  }
+}
+
+template <>
+inline CSSValueID PlatformEnumToCSSValueID(EAnimationTriggerType v) {
+  switch (v) {
+    case EAnimationTriggerType::kOnce:
+      return CSSValueID::kOnce;
+    case EAnimationTriggerType::kRepeat:
+      return CSSValueID::kRepeat;
+    case EAnimationTriggerType::kAlternate:
+      return CSSValueID::kAlternate;
+    case EAnimationTriggerType::kState:
+      return CSSValueID::kState;
+    default:
+      NOTREACHED();
+  }
+}
+
+template <>
+inline CSSValueID PlatformEnumToCSSValueID(FlexWrapMode v) {
+  switch (v) {
+    case FlexWrapMode::kNowrap:
+      return CSSValueID::kNowrap;
+    case FlexWrapMode::kWrap:
+      return CSSValueID::kWrap;
+    case FlexWrapMode::kWrapReverse:
+      return CSSValueID::kWrapReverse;
+    default:
+      NOTREACHED();
+  }
+}
+
 }  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_VALUE_ID_MAPPINGS_H_
