@@ -37,13 +37,16 @@ class CORE_EXPORT ContainerSelector {
   ContainerSelector(AtomicString name,
                     PhysicalAxes physical_axes,
                     LogicalAxes logical_axes,
-                    bool scroll_state)
+                    bool scroll_state,
+                    bool anchored_query)
       : name_(std::move(name)),
         physical_axes_(physical_axes),
         logical_axes_(logical_axes),
         has_sticky_query_(scroll_state),
         has_snap_query_(scroll_state),
-        has_overflow_query_(scroll_state) {}
+        has_scrollable_query_(scroll_state),
+        has_scroll_direction_query_(scroll_state),
+        has_anchored_query_(anchored_query) {}
   ContainerSelector(AtomicString name, const MediaQueryExpNode&);
 
   bool IsHashTableDeletedValue() const {
@@ -56,7 +59,9 @@ class CORE_EXPORT ContainerSelector {
            (has_style_query_ == o.has_style_query_) &&
            (has_sticky_query_ == o.has_sticky_query_) &&
            (has_snap_query_ == o.has_snap_query_) &&
-           (has_overflow_query_ == o.has_overflow_query_);
+           (has_scrollable_query_ == o.has_scrollable_query_) &&
+           (has_scroll_direction_query_ == o.has_scroll_direction_query_) &&
+           (has_anchored_query_ == o.has_anchored_query_);
   }
   bool operator!=(const ContainerSelector& o) const { return !(*this == o); }
 
@@ -76,12 +81,21 @@ class CORE_EXPORT ContainerSelector {
   bool SelectsStyleContainers() const { return has_style_query_; }
   bool SelectsStickyContainers() const { return has_sticky_query_; }
   bool SelectsSnapContainers() const { return has_snap_query_; }
-  bool SelectsOverflowContainers() const { return has_overflow_query_; }
+  bool SelectsScrollableContainers() const { return has_scrollable_query_; }
+  bool SelectsScrollDirectionContainers() const {
+    return has_scroll_direction_query_;
+  }
   bool SelectsScrollStateContainers() const {
     return SelectsStickyContainers() || SelectsSnapContainers() ||
-           SelectsOverflowContainers();
+           SelectsScrollableContainers() || SelectsScrollDirectionContainers();
   }
+  bool SelectsAnchoredContainers() const { return has_anchored_query_; }
   bool HasUnknownFeature() const { return has_unknown_feature_; }
+  bool SelectsAnyContainer() const {
+    return !HasUnknownFeature() &&
+           (SelectsSizeContainers() || SelectsStyleContainers() ||
+            SelectsScrollStateContainers() || SelectsAnchoredContainers());
+  }
 
   PhysicalAxes GetPhysicalAxes() const { return physical_axes_; }
   LogicalAxes GetLogicalAxes() const { return logical_axes_; }
@@ -93,7 +107,9 @@ class CORE_EXPORT ContainerSelector {
   bool has_style_query_{false};
   bool has_sticky_query_{false};
   bool has_snap_query_{false};
-  bool has_overflow_query_{false};
+  bool has_scrollable_query_{false};
+  bool has_scroll_direction_query_{false};
+  bool has_anchored_query_{false};
   bool has_unknown_feature_{false};
 };
 

@@ -43,9 +43,6 @@ import org.chromium.url.GURL;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
 
 /** Collection of utility methods that operates on Tab. */
 public class TabUtils {
@@ -261,7 +258,7 @@ public class TabUtils {
 
     private static float getWindowHeightExcludingSystemBarsDp(
             DimensionCompat compat, Context context) {
-        return (compat.getWindowHeight() - compat.getNavbarHeight() - compat.getStatusbarHeight())
+        return (compat.getWindowHeight() - compat.getNavbarHeight() - compat.getStatusBarHeight())
                 / context.getResources().getDisplayMetrics().density;
     }
 
@@ -284,13 +281,26 @@ public class TabUtils {
             int cardWidthPx,
             Context context,
             BrowserControlsStateProvider browserControlsStateProvider) {
-        int tabThumbnailHeight =
-                (int)
-                        ((cardWidthPx - getThumbnailWidthDiff(context))
-                                / getTabThumbnailAspectRatio(
-                                        context, browserControlsStateProvider));
-        int cardHeightPx = tabThumbnailHeight + getThumbnailHeightDiff(context);
-        return cardHeightPx;
+        float aspectRatio = getTabThumbnailAspectRatio(context, browserControlsStateProvider);
+        int thumbnailHeight = (int) ((cardWidthPx - getThumbnailWidthDiff(context)) / aspectRatio);
+        return thumbnailHeight + getThumbnailHeightDiff(context);
+    }
+
+    /**
+     * Derive grid card width based on height, expected thumbnail aspect ratio and margins.
+     *
+     * @param cardHeightPx width of the card
+     * @param context to derive view margins
+     * @param browserControlsStateProvider - For getting browser controls height.
+     * @return computed card height.
+     */
+    public static int deriveGridCardWidth(
+            int cardHeightPx,
+            Context context,
+            BrowserControlsStateProvider browserControlsStateProvider) {
+        float aspectRatio = getTabThumbnailAspectRatio(context, browserControlsStateProvider);
+        int thumbnailWidth = (int) ((cardHeightPx - getThumbnailHeightDiff(context)) * aspectRatio);
+        return thumbnailWidth + getThumbnailWidthDiff(context);
     }
 
     /**
@@ -370,14 +380,5 @@ public class TabUtils {
         final int thumbnailMargin =
                 (int) context.getResources().getDimension(R.dimen.tab_grid_card_thumbnail_margin);
         return 2 * (tabGridCardMargin + thumbnailMargin);
-    }
-
-    /** Returns the list of Tab IDs for the given Tabs. */
-    public static List<Integer> getTabIds(Collection<Tab> tabs) {
-        List<Integer> ret = new ArrayList<>(tabs.size());
-        for (Tab tab : tabs) {
-            ret.add(tab.getId());
-        }
-        return ret;
     }
 }

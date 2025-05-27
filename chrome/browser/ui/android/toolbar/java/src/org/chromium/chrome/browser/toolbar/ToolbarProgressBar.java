@@ -17,12 +17,14 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.animation.Interpolator;
 import android.widget.ProgressBar;
 
-import androidx.annotation.Nullable;
 import androidx.core.view.ViewCompat;
 
 import org.chromium.base.MathUtils;
 import org.chromium.base.ThreadUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.theme.ThemeUtils;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.ClipDrawableProgressBar;
@@ -34,6 +36,7 @@ import org.chromium.ui.util.ColorUtils;
  * indeterminate animation will begin playing and the animation will move across the screen smoothly
  * instead of jumping.
  */
+@NullMarked
 public class ToolbarProgressBar extends ClipDrawableProgressBar
         implements BrowserControlsStateProvider.Observer {
     /** Interface for progress bar animation interpolation logics. */
@@ -86,13 +89,13 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar
     private int mThemeColor;
 
     /** The indeterminate animating view for the progress bar. */
-    private ToolbarProgressBarAnimatingView mAnimatingView;
+    private @Nullable ToolbarProgressBarAnimatingView mAnimatingView;
 
     /** The progress bar's height. */
     private final int mProgressBarHeight;
 
     /** The current running animator that controls the fade in/out of the progress bar. */
-    @Nullable private Animator mFadeAnimator;
+    private @Nullable Animator mFadeAnimator;
 
     private final Runnable mStartSmoothIndeterminate =
             new Runnable() {
@@ -172,12 +175,17 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar
         // This tells accessibility services that progress bar changes are important enough to
         // announce to the user even when not focused.
         ViewCompat.setAccessibilityLiveRegion(this, ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE);
-        setForegroundOrThemeColor();
+        setProgressBarColors();
+    }
+
+    @Override
+    protected boolean useGradientDrawable() {
+        return ChromeFeatureList.sAndroidProgressBarVisualUpdate.isEnabled();
     }
 
     public void setAnimatingView(ToolbarProgressBarAnimatingView animatingView) {
         mAnimatingView = animatingView;
-        setForegroundOrThemeColor();
+        setProgressBarColors();
     }
 
     /**
@@ -359,7 +367,7 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar
         if (MathUtils.areFloatsEqual(progress, 1.0f) || progress > 1.0f) finish(true);
     }
 
-    private void setForegroundOrThemeColor() {
+    private void setProgressBarColors() {
         if (mThemeColor != 0) {
             setThemeColor(mThemeColor, false);
         } else {
@@ -386,7 +394,11 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar
         // The default toolbar has specific colors to use.
         if ((isDefaultTheme || ColorUtils.isThemeColorTooBright(color)) && !isIncognito) {
             setForegroundColor(SemanticColorUtils.getProgressBarForeground(getContext()));
-            setBackgroundColor(getContext().getColor(R.color.progress_bar_bg_color_list));
+            if (ChromeFeatureList.sAndroidProgressBarVisualUpdate.isEnabled()) {
+                setBackgroundColor(SemanticColorUtils.getProgressBarTrackColor(getContext()));
+            } else {
+                setBackgroundColor(getContext().getColor(R.color.progress_bar_bg_color_list));
+            }
             return;
         }
 

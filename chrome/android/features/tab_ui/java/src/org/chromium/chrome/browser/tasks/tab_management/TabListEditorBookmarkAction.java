@@ -10,6 +10,7 @@ import android.graphics.drawable.Drawable;
 import androidx.appcompat.content.res.AppCompatResources;
 
 import org.chromium.base.ResettersForTesting;
+import org.chromium.chrome.browser.bookmarks.BookmarkManagerOpenerImpl;
 import org.chromium.chrome.browser.bookmarks.BookmarkModel;
 import org.chromium.chrome.browser.bookmarks.BookmarkUtils;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -22,7 +23,7 @@ import java.util.List;
 
 /** Bookmark action for the {@link TabListEditorMenu}. */
 public class TabListEditorBookmarkAction extends TabListEditorAction {
-    private Activity mActivity;
+    private final Activity mActivity;
     private TabListEditorBookmarkActionDelegate mDelegate;
 
     /** Interface for passing params on bookmark action. */
@@ -87,22 +88,26 @@ public class TabListEditorBookmarkAction extends TabListEditorAction {
             bookmarkModel.finishLoadingBookmarkModel(
                     () -> {
                         BookmarkUtils.addBookmarksOnMultiSelect(
-                                activity, bookmarkModel, tabs, snackbarManager);
+                                activity,
+                                bookmarkModel,
+                                tabs,
+                                snackbarManager,
+                                new BookmarkManagerOpenerImpl());
                     });
         }
     }
 
     @Override
-    public void onSelectionStateChange(List<Integer> tabIds) {
+    public void onSelectionStateChange(List<TabListEditorItemSelectionId> itemIds) {
         int size =
                 editorSupportsActionOnRelatedTabs()
-                        ? getTabCountIncludingRelatedTabs(getTabGroupModelFilter(), tabIds)
-                        : tabIds.size();
-        setEnabledAndItemCount(!tabIds.isEmpty(), size);
+                        ? getTabCountIncludingRelatedTabs(getTabGroupModelFilter(), itemIds)
+                        : itemIds.size();
+        setEnabledAndItemCount(!itemIds.isEmpty(), size);
     }
 
     @Override
-    public boolean performAction(List<Tab> tabs) {
+    public boolean performAction(List<Tab> tabs, List<String> tabGroupSyncIds) {
         assert !tabs.isEmpty() : "Bookmark action should not be enabled for no tabs.";
         SnackbarManager snackbarManager = getActionDelegate().getSnackbarManager();
         snackbarManager.dismissAllSnackbars();

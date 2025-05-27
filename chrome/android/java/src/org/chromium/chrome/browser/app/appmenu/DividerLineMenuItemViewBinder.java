@@ -4,9 +4,11 @@
 
 package org.chromium.chrome.browser.app.appmenu;
 
+
 import android.content.Context;
 import android.view.View;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuItemProperties;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuUtil;
@@ -15,8 +17,15 @@ import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** A custom binder used to bind the divider line in app menu. */
+@NullMarked
 public class DividerLineMenuItemViewBinder implements CustomViewBinder {
     private static final int DIVIDER_LINE_ITEM_VIEW_TYPE = 0;
+
+    public static boolean isDividerLineItemId(int id) {
+        return id == R.id.divider_line_id
+                || id == R.id.managed_by_divider_line_id
+                || id == R.id.quick_delete_divider_line_id;
+    }
 
     @Override
     public int getViewTypeCount() {
@@ -25,11 +34,7 @@ public class DividerLineMenuItemViewBinder implements CustomViewBinder {
 
     @Override
     public int getItemViewType(int id) {
-        return (id == R.id.divider_line_id
-                        || id == R.id.managed_by_divider_line_id
-                        || id == R.id.quick_delete_divider_line_id)
-                ? DIVIDER_LINE_ITEM_VIEW_TYPE
-                : CustomViewBinder.NOT_HANDLED;
+        return isDividerLineItemId(id) ? DIVIDER_LINE_ITEM_VIEW_TYPE : CustomViewBinder.NOT_HANDLED;
     }
 
     @Override
@@ -47,17 +52,10 @@ public class DividerLineMenuItemViewBinder implements CustomViewBinder {
 
         if (key == AppMenuItemProperties.MENU_ITEM_ID) {
             int id = model.get(AppMenuItemProperties.MENU_ITEM_ID);
-            assert id == R.id.divider_line_id
-                    || id == R.id.managed_by_divider_line_id
-                    || id == R.id.quick_delete_divider_line_id;
+            assert isDividerLineItemId(id);
             view.setId(id);
             view.setEnabled(false);
         }
-    }
-
-    @Override
-    public boolean supportsEnterAnimation(int id) {
-        return true;
     }
 
     @Override

@@ -164,7 +164,7 @@ class NotReachedLogMessage : public LogMessage {
 
 class DCheckLogMessage : public LogMessage {
  public:
-  DCheckLogMessage(const base::Location& location)
+  explicit DCheckLogMessage(const base::Location& location)
       : LogMessage(location.file_name(),
                    location.line_number(),
                    LOGGING_DCHECK),
@@ -238,38 +238,42 @@ class DCheckErrnoLogMessage : public ErrnoLogMessage {
 
 }  // namespace
 
+CheckError::CheckError(LogMessage* log_message) : log_message_(log_message) {}
+
 CheckError CheckError::Check(const char* condition,
                              base::NotFatalUntil fatal_milestone,
                              const base::Location& location) {
   auto* const log_message = new CheckLogMessage(
       location, GetCheckSeverity(fatal_milestone), fatal_milestone);
+  // TODO(pbos): Make this output CHECK instead of Check.
   log_message->stream() << "Check failed: " << condition << ". ";
   return CheckError(log_message);
 }
 
-CheckError CheckError::CheckOp(char* log_message_str,
-                               base::NotFatalUntil fatal_milestone,
-                               const base::Location& location) {
+LogMessage* CheckError::CheckOp(char* log_message_str,
+                                base::NotFatalUntil fatal_milestone,
+                                const base::Location& location) {
   auto* const log_message = new CheckLogMessage(
       location, GetCheckSeverity(fatal_milestone), fatal_milestone);
-  log_message->stream() << log_message_str;
+  // TODO(pbos): Make this output CHECK instead of Check.
+  log_message->stream() << "Check failed: " << log_message_str;
   free(log_message_str);
-  return CheckError(log_message);
+  return log_message;
 }
 
 CheckError CheckError::DCheck(const char* condition,
                               const base::Location& location) {
   auto* const log_message = new DCheckLogMessage(location);
-  log_message->stream() << "Check failed: " << condition << ". ";
+  log_message->stream() << "DCHECK failed: " << condition << ". ";
   return CheckError(log_message);
 }
 
-CheckError CheckError::DCheckOp(char* log_message_str,
-                                const base::Location& location) {
+LogMessage* CheckError::DCheckOp(char* log_message_str,
+                                 const base::Location& location) {
   auto* const log_message = new DCheckLogMessage(location);
-  log_message->stream() << log_message_str;
+  log_message->stream() << "DCHECK failed: " << log_message_str;
   free(log_message_str);
-  return CheckError(log_message);
+  return log_message;
 }
 
 CheckError CheckError::DumpWillBeCheck(const char* condition,
@@ -277,36 +281,20 @@ CheckError CheckError::DumpWillBeCheck(const char* condition,
   auto* const log_message =
       new CheckLogMessage(location, GetDumpSeverity(),
                           base::NotFatalUntil::NoSpecifiedMilestoneInternal);
+  // TODO(pbos): Make this output CHECK instead of Check.
   log_message->stream() << "Check failed: " << condition << ". ";
   return CheckError(log_message);
 }
 
-CheckError CheckError::DumpWillBeCheckOp(char* log_message_str,
-                                         const base::Location& location) {
+LogMessage* CheckError::DumpWillBeCheckOp(char* log_message_str,
+                                          const base::Location& location) {
   auto* const log_message =
       new CheckLogMessage(location, GetDumpSeverity(),
                           base::NotFatalUntil::NoSpecifiedMilestoneInternal);
-  log_message->stream() << log_message_str;
+  // TODO(pbos): Make this output CHECK instead of Check.
+  log_message->stream() << "Check failed: " << log_message_str;
   free(log_message_str);
-  return CheckError(log_message);
-}
-
-CheckError CheckError::PCheck(const char* condition,
-                              const base::Location& location) {
-  SystemErrorCode err_code = logging::GetLastSystemErrorCode();
-#if BUILDFLAG(IS_WIN)
-  auto* const log_message = new Win32ErrorLogMessage(
-      location.file_name(), location.line_number(), LOGGING_FATAL, err_code);
-#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
-  auto* const log_message = new ErrnoLogMessage(
-      location.file_name(), location.line_number(), LOGGING_FATAL, err_code);
-#endif
-  log_message->stream() << "Check failed: " << condition << ". ";
-  return CheckError(log_message);
-}
-
-CheckError CheckError::PCheck(const base::Location& location) {
-  return PCheck("", location);
+  return log_message;
 }
 
 CheckError CheckError::DPCheck(const char* condition,
@@ -317,16 +305,7 @@ CheckError CheckError::DPCheck(const char* condition,
 #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   auto* const log_message = new DCheckErrnoLogMessage(location, err_code);
 #endif
-  log_message->stream() << "Check failed: " << condition << ". ";
-  return CheckError(log_message);
-}
-
-CheckError CheckError::DumpWillBeNotReachedNoreturn(
-    const base::Location& location) {
-  auto* const log_message = new NotReachedLogMessage(
-      location, GetDumpSeverity(),
-      base::NotFatalUntil::NoSpecifiedMilestoneInternal);
-  log_message->stream() << "NOTREACHED hit. ";
+  log_message->stream() << "DCHECK failed: " << condition << ". ";
   return CheckError(log_message);
 }
 
@@ -334,6 +313,7 @@ CheckError CheckError::NotImplemented(const char* function,
                                       const base::Location& location) {
   auto* const log_message = new LogMessage(
       location.file_name(), location.line_number(), LOGGING_ERROR);
+  // TODO(pbos): Make this output NOTIMPLEMENTED instead of Not implemented.
   log_message->stream() << "Not implemented reached in " << function;
   return CheckError(log_message);
 }
@@ -362,24 +342,76 @@ CheckError::~CheckError() {
   }
 }
 
-CheckError::CheckError(LogMessage* log_message) : log_message_(log_message) {}
+// Note: This function ends up in crash stack traces. If its full name changes,
+// the crash server's magic signature logic needs to be updated. See
+// cl/306632920.
+CheckNoreturnError::~CheckNoreturnError() {
+  // Reset before `ImmediateCrash()` to ensure the message is flushed.
+  log_message_.reset();
+
+  // Make sure we die if we haven't.
+  // TODO(crbug.com/40254046): Replace this with NOTREACHED() once LOG(FATAL) is
+  // [[noreturn]].
+  base::ImmediateCrash();
+}
+
+CheckNoreturnError CheckNoreturnError::Check(const char* condition,
+                                             const base::Location& location) {
+  auto* const log_message =
+      new CheckLogMessage(location, LOGGING_FATAL,
+                          base::NotFatalUntil::NoSpecifiedMilestoneInternal);
+  // TODO(pbos): Make this output CHECK instead of Check.
+  log_message->stream() << "Check failed: " << condition << ". ";
+  return CheckNoreturnError(log_message);
+}
+
+LogMessage* CheckNoreturnError::CheckOp(char* log_message_str,
+                                        const base::Location& location) {
+  auto* const log_message =
+      new CheckLogMessage(location, LOGGING_FATAL,
+                          base::NotFatalUntil::NoSpecifiedMilestoneInternal);
+  // TODO(pbos): Make this output CHECK instead of Check.
+  log_message->stream() << "Check failed: " << log_message_str;
+  free(log_message_str);
+  return log_message;
+}
+
+CheckNoreturnError CheckNoreturnError::PCheck(const char* condition,
+                                              const base::Location& location) {
+  SystemErrorCode err_code = logging::GetLastSystemErrorCode();
+#if BUILDFLAG(IS_WIN)
+  auto* const log_message = new Win32ErrorLogMessage(
+      location.file_name(), location.line_number(), LOGGING_FATAL, err_code);
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
+  auto* const log_message = new ErrnoLogMessage(
+      location.file_name(), location.line_number(), LOGGING_FATAL, err_code);
+#endif
+  // TODO(pbos): Make this output CHECK instead of Check.
+  log_message->stream() << "Check failed: " << condition << ". ";
+  return CheckNoreturnError(log_message);
+}
+
+CheckNoreturnError CheckNoreturnError::PCheck(const base::Location& location) {
+  return PCheck("", location);
+}
 
 NotReachedError NotReachedError::NotReached(base::NotFatalUntil fatal_milestone,
                                             const base::Location& location) {
   auto* const log_message = new NotReachedLogMessage(
       location, GetCheckSeverity(fatal_milestone), fatal_milestone);
 
-  // TODO(pbos): Consider a better message for NotReached(), this is here to
-  // match existing behavior + test expectations.
+  // TODO(pbos): Make this output "NOTREACHED hit." like the other NOTREACHEDs.
   log_message->stream() << "Check failed: false. ";
   return NotReachedError(log_message);
 }
 
-void NotReachedError::TriggerNotReached() {
-  // This triggers a NOTREACHED_IN_MIGRATION() error as the returned
-  // NotReachedError goes out of scope.
-  NotReached()
-      << "NOTREACHED log messages are omitted in official builds. Sorry!";
+NotReachedError NotReachedError::DumpWillBeNotReached(
+    const base::Location& location) {
+  auto* const log_message = new NotReachedLogMessage(
+      location, GetDumpSeverity(),
+      base::NotFatalUntil::NoSpecifiedMilestoneInternal);
+  log_message->stream() << "NOTREACHED hit. ";
+  return NotReachedError(log_message);
 }
 
 NotReachedError::~NotReachedError() = default;

@@ -4,6 +4,7 @@
 
 #include "extensions/browser/test_extensions_browser_client.h"
 
+#include "base/command_line.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -12,6 +13,7 @@
 #include "extensions/browser/updater/null_extension_cache.h"
 #include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
+#include "extensions/common/switches.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -67,7 +69,7 @@ bool TestExtensionsBrowserClient::IsShuttingDown() { return false; }
 bool TestExtensionsBrowserClient::AreExtensionsDisabled(
     const base::CommandLine& command_line,
     BrowserContext* context) {
-  return false;
+  return command_line.HasSwitch(switches::kDisableExtensions);
 }
 
 bool TestExtensionsBrowserClient::IsValidContext(void* context) {
@@ -126,6 +128,11 @@ bool TestExtensionsBrowserClient::AreExtensionsDisabledForContext(
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
+bool TestExtensionsBrowserClient::IsActiveContext(
+    content::BrowserContext* browser_context) const {
+  return true;
+}
+
 std::string TestExtensionsBrowserClient::GetUserIdHashFromContext(
     content::BrowserContext* context) {
   if (context != main_context_ || !ash::LoginState::IsInitialized()) {
@@ -303,11 +310,6 @@ TestExtensionsBrowserClient::CreateUpdateClient(
   return update_client_factory_.is_null()
              ? nullptr
              : base::WrapRefCounted(update_client_factory_.Run());
-}
-
-bool TestExtensionsBrowserClient::IsLockScreenContext(
-    content::BrowserContext* context) {
-  return lock_screen_context_ && context == lock_screen_context_;
 }
 
 std::string TestExtensionsBrowserClient::GetApplicationLocale() {

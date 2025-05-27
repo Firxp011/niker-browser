@@ -27,16 +27,18 @@ class Extension;
 
 namespace browsertest_util {
 
+#if BUILDFLAG(IS_CHROMEOS)
 // On chromeos, the extension cache directory must be initialized before
 // extensions can be installed in some situations (e.g. policy force installs
 // via update urls). The chromeos device setup scripts take care of this in
 // actual production devices, but some tests need to do it manually.
 void CreateAndInitializeLocalCache();
+#endif
 
-// Launches a new app window for |app| in |profile|.
+// Launches a new app window for `app` in `profile`.
 Browser* LaunchAppBrowser(Profile* profile, const Extension* app);
 
-// Adds a tab to |browser| and returns the newly added WebContents.
+// Adds a tab to `browser` and returns the newly added WebContents.
 content::WebContents* AddTab(Browser* browser, const GURL& url);
 
 // Returns the number of WindowControllers with the Profile `profile`.
@@ -60,7 +62,7 @@ class BlockedActionWaiter : public ExtensionActionRunner::TestObserver {
   explicit BlockedActionWaiter(ExtensionActionRunner* runner);
   BlockedActionWaiter(const BlockedActionWaiter&) = delete;
   BlockedActionWaiter& operator=(const BlockedActionWaiter&) = delete;
-  ~BlockedActionWaiter();
+  ~BlockedActionWaiter() override;
 
   // Wait for the blocked action until the observer is called with the blocked
   // action being added.
@@ -70,7 +72,9 @@ class BlockedActionWaiter : public ExtensionActionRunner::TestObserver {
   // ExtensionActionRunner::TestObserver:
   void OnBlockedActionAdded() override;
 
-  const raw_ptr<ExtensionActionRunner> runner_;
+  base::ScopedObservation<ExtensionActionRunner,
+                          ExtensionActionRunner::TestObserver>
+      action_runner_observation_{this};
   base::RunLoop run_loop_;
 };
 

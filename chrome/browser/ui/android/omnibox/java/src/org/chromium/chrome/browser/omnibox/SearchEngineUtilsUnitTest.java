@@ -16,6 +16,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.robolectric.Shadows.shadowOf;
 
+import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 
@@ -33,10 +34,11 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.robolectric.shadow.api.Shadow;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.UmaRecorderHolder;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.locale.LocaleManagerDelegate;
 import org.chromium.chrome.browser.omnibox.status.StatusProperties.StatusIconResource;
@@ -50,6 +52,7 @@ import org.chromium.chrome.browser.ui.favicon.FaviconHelper;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
+import org.chromium.components.omnibox.OmniboxFeatureList;
 import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.url.GURL;
@@ -62,7 +65,6 @@ public class SearchEngineUtilsUnitTest {
     private static final String EVENTS_HISTOGRAM = "AndroidSearchEngineLogo.Events";
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public JniMocker mJniMocker = new JniMocker();
 
     @Captor ArgumentCaptor<FaviconHelper.FaviconImageCallback> mCallbackCaptor;
     @Mock FaviconHelper mFaviconHelper;
@@ -72,10 +74,12 @@ public class SearchEngineUtilsUnitTest {
     @Mock Resources mResources;
     @Mock Profile mProfile;
 
-    Bitmap mBitmap;
+    private Context mContext;
+    private Bitmap mBitmap;
 
     @Before
     public void setUp() {
+        mContext = ContextUtils.getApplicationContext();
         mBitmap = Shadow.newInstanceOf(Bitmap.class);
         shadowOf(mBitmap).appendDescription("test");
 
@@ -116,6 +120,11 @@ public class SearchEngineUtilsUnitTest {
         doReturn(true).when(mProfile).isOffTheRecord();
         searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
         assertFalse(searchEngineUtils.shouldShowSearchEngineLogo());
+
+        // Verify default placeholder text.
+        assertEquals(
+                mContext.getString(R.string.omnibox_empty_hint),
+                searchEngineUtils.getSearchBoxHintText());
     }
 
     @Test
@@ -153,7 +162,7 @@ public class SearchEngineUtilsUnitTest {
 
         var expected = new StatusIconResource(LOGO_URL, mBitmap, 0);
         var icon = searchEngineUtils.getSearchEngineLogo(BrandedColorScheme.APP_DEFAULT);
-        assertEquals(icon, expected);
+        assertEquals(expected, icon);
     }
 
     @Test
@@ -164,7 +173,7 @@ public class SearchEngineUtilsUnitTest {
 
         var icon = searchEngineUtils.getSearchEngineLogo(BrandedColorScheme.APP_DEFAULT);
 
-        assertEquals(icon, expected);
+        assertEquals(expected, icon);
     }
 
     @Test
@@ -176,12 +185,13 @@ public class SearchEngineUtilsUnitTest {
 
         var expected = new StatusIconResource(R.drawable.ic_logo_googleg_20dp, 0);
         var icon = searchEngineUtils.getSearchEngineLogo(BrandedColorScheme.APP_DEFAULT);
-        assertEquals(icon, expected);
+        assertEquals(expected, icon);
     }
 
-    private void configureSearchEngine(String keyword) {
+    private void configureSearchEngine(String keyword, String shortName) {
         doReturn("google".equals(keyword)).when(mTemplateUrlService).isDefaultSearchEngineGoogle();
         doReturn(keyword).when(mTemplateUrl).getKeyword();
+        doReturn(shortName).when(mTemplateUrl).getShortName();
     }
 
     private void verifyPersistedSearchEngine(String keyword) {
@@ -213,7 +223,7 @@ public class SearchEngineUtilsUnitTest {
         {
             // To Google
             saveSearchEngineSpecificDataToCache();
-            configureSearchEngine("google");
+            configureSearchEngine("google", "Google");
             new SearchEngineUtils(mProfile, mFaviconHelper);
             verifyPersistedSearchEngine("google");
             verifyNoSearchEngineSpecificDataInCache();
@@ -222,7 +232,7 @@ public class SearchEngineUtilsUnitTest {
         {
             // To Non-Google
             saveSearchEngineSpecificDataToCache();
-            configureSearchEngine("engine");
+            configureSearchEngine("engine", "Some Engine");
             new SearchEngineUtils(mProfile, mFaviconHelper);
             verifyPersistedSearchEngine("engine");
             verifyNoSearchEngineSpecificDataInCache();
@@ -233,12 +243,12 @@ public class SearchEngineUtilsUnitTest {
     public void onTemplateUrlServiceChanged_newTemplateUrl_withDifferentPreviousEngine() {
         {
             // To Google
-            configureSearchEngine("engine");
+            configureSearchEngine("engine", "Some Engine");
             var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
 
             // Make an update
             saveSearchEngineSpecificDataToCache();
-            configureSearchEngine("google");
+            configureSearchEngine("google", "Google");
             searchEngineUtils.onTemplateURLServiceChanged();
             verifyPersistedSearchEngine("google");
             verifyNoSearchEngineSpecificDataInCache();
@@ -246,12 +256,12 @@ public class SearchEngineUtilsUnitTest {
 
         {
             // To Non-Google
-            configureSearchEngine("google");
+            configureSearchEngine("google", "Google");
             var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
 
             // Make an update
             saveSearchEngineSpecificDataToCache();
-            configureSearchEngine("engine");
+            configureSearchEngine("engine", "Some Engine");
             searchEngineUtils.onTemplateURLServiceChanged();
             verifyPersistedSearchEngine("engine");
             verifyNoSearchEngineSpecificDataInCache();
@@ -259,31 +269,141 @@ public class SearchEngineUtilsUnitTest {
     }
 
     @Test
-    public void onTemplateUrlServiceChanged_newTemplateUrl_withSamePreviousEngine() {
+    @DisableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
+    public void onTemplateUrlServiceChanged_newTemplateUrl_noHintTextUpdate() {
         {
             // Google to Google
-            configureSearchEngine("google");
+            configureSearchEngine("google", "Google");
             var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
 
             // Make an update
             saveSearchEngineSpecificDataToCache();
-            configureSearchEngine("google");
+            configureSearchEngine("google", "Google");
             searchEngineUtils.onTemplateURLServiceChanged();
-            verifyPersistedSearchEngine("google");
-            verifySearchEngineSpecificDataRetainedInCache();
+
+            // Verify default placeholder text.
+            assertEquals(
+                    mContext.getString(R.string.omnibox_empty_hint),
+                    searchEngineUtils.getSearchBoxHintText());
         }
 
         {
             // Non-Google to same non-Google.
-            configureSearchEngine("engine");
+            configureSearchEngine("engine", "Some Engine");
             var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
 
             // Make an update
             saveSearchEngineSpecificDataToCache();
-            configureSearchEngine("engine");
+            configureSearchEngine("engine", "Another Engine");
+            searchEngineUtils.onTemplateURLServiceChanged();
+
+            // Verify default placeholder text.
+            assertEquals(
+                    mContext.getString(R.string.omnibox_empty_hint),
+                    searchEngineUtils.getSearchBoxHintText());
+        }
+
+        {
+            // Non-Google, unnamed engine
+            configureSearchEngine("engine", "Some Engine");
+            var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
+
+            // Make an update
+            saveSearchEngineSpecificDataToCache();
+            configureSearchEngine("engine", null);
+            searchEngineUtils.onTemplateURLServiceChanged();
+
+            // Verify default placeholder text.
+            assertEquals(
+                    mContext.getString(R.string.omnibox_empty_hint),
+                    searchEngineUtils.getSearchBoxHintText());
+        }
+
+        {
+            // Non-Google, unnamed engine
+            configureSearchEngine("engine", "Some Engine");
+            var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
+
+            // Make an update to no engine
+            doReturn(null).when(mTemplateUrlService).getDefaultSearchEngineTemplateUrl();
+            searchEngineUtils.onTemplateURLServiceChanged();
+
+            // Verify default placeholder text.
+            assertEquals(
+                    mContext.getString(R.string.omnibox_empty_hint),
+                    searchEngineUtils.getSearchBoxHintText());
+        }
+    }
+
+    @Test
+    public void onTemplateUrlServiceChanged_newTemplateUrl_withSamePreviousEngine() {
+        {
+            // Google to Google
+            configureSearchEngine("google", "Google");
+            var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
+
+            // Make an update
+            saveSearchEngineSpecificDataToCache();
+            configureSearchEngine("google", "Google");
+            searchEngineUtils.onTemplateURLServiceChanged();
+            verifyPersistedSearchEngine("google");
+            verifySearchEngineSpecificDataRetainedInCache();
+
+            // Verify updated placeholder text.
+            assertEquals(
+                    mContext.getString(R.string.omnibox_empty_hint_with_dse_name, "Google"),
+                    searchEngineUtils.getSearchBoxHintText());
+        }
+
+        {
+            // Non-Google to same non-Google.
+            configureSearchEngine("engine", "Some Engine");
+            var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
+
+            // Make an update
+            saveSearchEngineSpecificDataToCache();
+            configureSearchEngine("engine", "Another Engine");
             searchEngineUtils.onTemplateURLServiceChanged();
             verifyPersistedSearchEngine("engine");
             verifySearchEngineSpecificDataRetainedInCache();
+
+            // Verify updated placeholder text.
+            assertEquals(
+                    mContext.getString(R.string.omnibox_empty_hint_with_dse_name, "Another Engine"),
+                    searchEngineUtils.getSearchBoxHintText());
+        }
+
+        {
+            // Non-Google, unnamed engine
+            configureSearchEngine("engine", "Some Engine");
+            var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
+
+            // Make an update
+            saveSearchEngineSpecificDataToCache();
+            configureSearchEngine("engine", null);
+            searchEngineUtils.onTemplateURLServiceChanged();
+            verifyPersistedSearchEngine("engine");
+            verifySearchEngineSpecificDataRetainedInCache();
+
+            // Verify default placeholder text.
+            assertEquals(
+                    mContext.getString(R.string.omnibox_empty_hint),
+                    searchEngineUtils.getSearchBoxHintText());
+        }
+
+        {
+            // Non-Google, unnamed engine
+            configureSearchEngine("engine", "Some Engine");
+            var searchEngineUtils = new SearchEngineUtils(mProfile, mFaviconHelper);
+
+            // Make an update to no engine
+            doReturn(null).when(mTemplateUrlService).getDefaultSearchEngineTemplateUrl();
+            searchEngineUtils.onTemplateURLServiceChanged();
+
+            // Verify default placeholder text.
+            assertEquals(
+                    mContext.getString(R.string.omnibox_empty_hint),
+                    searchEngineUtils.getSearchBoxHintText());
         }
     }
 
@@ -295,10 +415,10 @@ public class SearchEngineUtilsUnitTest {
 
         var expected = new StatusIconResource(LOGO_URL, mBitmap, 0);
         var icon = searchEngineUtils.getSearchEngineLogo(BrandedColorScheme.APP_DEFAULT);
-        assertEquals(icon, expected);
+        assertEquals(expected, icon);
 
         icon = searchEngineUtils.getSearchEngineLogo(BrandedColorScheme.APP_DEFAULT);
-        assertEquals(icon, expected);
+        assertEquals(expected, icon);
 
         // Expect only one actual fetch, that happens independently from get request.
         // All get requests always supply cached value.
@@ -328,7 +448,7 @@ public class SearchEngineUtilsUnitTest {
         var expected = SearchEngineUtils.getFallbackSearchIcon(BrandedColorScheme.APP_DEFAULT);
         var icon = searchEngineUtils.getSearchEngineLogo(BrandedColorScheme.APP_DEFAULT);
 
-        assertEquals(icon, expected);
+        assertEquals(expected, icon);
         assertEquals(
                 1,
                 RecordHistogram.getHistogramValueCountForTesting(
@@ -352,7 +472,7 @@ public class SearchEngineUtilsUnitTest {
         var expected = SearchEngineUtils.getFallbackSearchIcon(BrandedColorScheme.APP_DEFAULT);
         var icon = searchEngineUtils.getSearchEngineLogo(BrandedColorScheme.APP_DEFAULT);
 
-        assertEquals(icon, expected);
+        assertEquals(expected, icon);
         assertEquals(
                 1,
                 RecordHistogram.getHistogramValueCountForTesting(
@@ -376,7 +496,7 @@ public class SearchEngineUtilsUnitTest {
         FaviconHelper.FaviconImageCallback faviconCallback = mCallbackCaptor.getValue();
         faviconCallback.onFaviconAvailable(null, new GURL(LOGO_URL));
 
-        assertEquals(icon, expected);
+        assertEquals(expected, icon);
         assertEquals(
                 1,
                 RecordHistogram.getHistogramValueCountForTesting(
@@ -477,37 +597,5 @@ public class SearchEngineUtilsUnitTest {
         assertFalse(searchEngineUtils.needToCheckForSearchEnginePromo());
 
         verify(mLocaleManagerDelegate, times(1)).needToCheckForSearchEnginePromo();
-    }
-
-    private static Bitmap createSolidImage(int width, int height, int color) {
-        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        for (int x = 0; x < bitmap.getWidth(); x++) {
-            for (int y = 0; y < bitmap.getHeight(); y++) {
-                bitmap.setPixel(x, y, color);
-            }
-        }
-        return bitmap;
-    }
-
-    private static Bitmap createSolidImageWithDifferentInnerColor(
-            int width, int height, int outerColor, int innerColor) {
-        Bitmap bitmap = createSolidImage(width, height, outerColor);
-        for (int x = 1; x < bitmap.getWidth() - 1; x++) {
-            for (int y = 1; y < bitmap.getHeight() - 1; y++) {
-                bitmap.setPixel(x, y, innerColor);
-            }
-        }
-        return bitmap;
-    }
-
-    private static Bitmap createSolidImageWithSlighlyLargerEdgeCoverage(
-            int width, int height, int largerColor, int smallerColor) {
-        Bitmap bitmap = createSolidImage(width, height, largerColor);
-        for (int x = 0; x < bitmap.getWidth(); x++) {
-            for (int y = bitmap.getHeight() + 1; y < bitmap.getHeight(); y++) {
-                bitmap.setPixel(x, y, smallerColor);
-            }
-        }
-        return bitmap;
     }
 }

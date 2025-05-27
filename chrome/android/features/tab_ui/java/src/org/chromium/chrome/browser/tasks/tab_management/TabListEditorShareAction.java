@@ -47,9 +47,9 @@ public class TabListEditorShareAction extends TabListEditorAction {
                             UrlConstants.CHROME_NATIVE_SCHEME,
                             ContentUrlConstants.ABOUT_SCHEME));
     private static Callback<Intent> sIntentCallbackForTesting;
-    private Context mContext;
+    private final Context mContext;
     private boolean mSkipUrlCheckForTesting;
-    private BroadcastReceiver mBroadcastReceiver;
+    private final BroadcastReceiver mBroadcastReceiver;
 
     // These values are persisted to logs. Entries should not be renumbered and
     // numeric values should never be reused.
@@ -115,7 +115,7 @@ public class TabListEditorShareAction extends TabListEditorAction {
     }
 
     @Override
-    public void onSelectionStateChange(List<Integer> tabIds) {
+    public void onSelectionStateChange(List<TabListEditorItemSelectionId> itemIds) {
         boolean enableShare = false;
         List<Tab> selectedTabs = getTabsOrTabsAndRelatedTabsFromSelection();
 
@@ -126,12 +126,12 @@ public class TabListEditorShareAction extends TabListEditorAction {
             }
         }
 
-        int size = editorSupportsActionOnRelatedTabs() ? selectedTabs.size() : tabIds.size();
+        int size = editorSupportsActionOnRelatedTabs() ? selectedTabs.size() : itemIds.size();
         setEnabledAndItemCount(enableShare, size);
     }
 
     @Override
-    public boolean performAction(List<Tab> tabs) {
+    public boolean performAction(List<Tab> tabs, List<String> tabGroupSyncIds) {
         assert !tabs.isEmpty() : "Share action should not be enabled for no tabs.";
 
         TabList tabList = getTabGroupModelFilter().getTabModel();
@@ -241,11 +241,10 @@ public class TabListEditorShareAction extends TabListEditorAction {
                                                     actionId);
                                             TabUiMetricsHelper.recordShareStateHistogram(
                                                     TabListEditorShareActionState.SUCCESS);
+                                            if (sIntentCallbackForTesting != null) {
+                                                sIntentCallbackForTesting.onResult(shareIntent);
+                                            }
                                         });
-
-                                if (sIntentCallbackForTesting != null) {
-                                    sIntentCallbackForTesting.onResult(shareIntent);
-                                }
                             });
                 });
     }

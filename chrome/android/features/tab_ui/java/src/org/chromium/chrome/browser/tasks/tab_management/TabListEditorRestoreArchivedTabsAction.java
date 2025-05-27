@@ -44,13 +44,13 @@ public class TabListEditorRestoreArchivedTabsAction extends TabListEditorAction 
     }
 
     @Override
-    public void onSelectionStateChange(List<Integer> tabIds) {
-        setEnabledAndItemCount(tabIds.size() > 0, tabIds.size());
+    public void onSelectionStateChange(List<TabListEditorItemSelectionId> itemIds) {
+        setEnabledAndItemCount(itemIds.size() > 0, itemIds.size());
     }
 
     @Override
-    public boolean performAction(List<Tab> tabs) {
-        mArchiveDelegate.restoreArchivedTabs(tabs);
+    public boolean performAction(List<Tab> tabs, List<String> tabGroupSyncIds) {
+        mArchiveDelegate.restoreArchivedTabs(tabs, tabGroupSyncIds);
         return true;
     }
 

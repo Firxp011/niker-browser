@@ -43,7 +43,12 @@ CSSValueList::CSSValueList(ValueListSeparator list_separator)
 
 CSSValueList::CSSValueList(ValueListSeparator list_separator,
                            HeapVector<Member<const CSSValue>, 4> values)
-    : CSSValue(kValueListClass), values_(std::move(values)) {
+    : CSSValueList(kValueListClass, list_separator, std::move(values)) {}
+
+CSSValueList::CSSValueList(ClassType class_type,
+                           ValueListSeparator list_separator,
+                           HeapVector<Member<const CSSValue>, 4> values)
+    : CSSValue(class_type), values_(std::move(values)) {
   value_list_separator_ = list_separator;
 }
 
@@ -110,23 +115,6 @@ CSSValueList* CSSValueList::Copy() const {
   new_list->values_ = values_;
   new_list->needs_tree_scope_population_ = needs_tree_scope_population_;
   return new_list;
-}
-
-const CSSValue* CSSValueList::UntaintedCopy() const {
-  bool changed = false;
-  HeapVector<Member<const CSSValue>, 4> untainted_values;
-  for (const CSSValue* value : values_) {
-    untainted_values.push_back(value->UntaintedCopy());
-    if (value != untainted_values.back().Get()) {
-      changed = true;
-    }
-  }
-  if (!changed) {
-    return this;
-  }
-  return MakeGarbageCollected<CSSValueList>(
-      static_cast<ValueListSeparator>(value_list_separator_),
-      std::move(untainted_values));
 }
 
 const CSSValueList& CSSValueList::PopulateWithTreeScope(

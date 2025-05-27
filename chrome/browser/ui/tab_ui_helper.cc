@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/tab_ui_helper.h"
 
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "build/build_config.h"
 #include "chrome/browser/favicon/favicon_utils.h"
@@ -11,6 +12,17 @@
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/resources/grit/ui_resources.h"
+
+namespace {
+
+// Whether the throbber should be shown for a restored tab after it becomes
+// visible, instead of when it's active in the tab strip (this signal is known
+// to be broken crbug.com/413080225#comment8).
+BASE_FEATURE(kSessionRestoreShowThrobberOnVisible,
+             "SessionRestoreShowThrobberOnVisible",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+}  // namespace
 
 TabUIHelper::TabUIHelper(content::WebContents* contents)
     : WebContentsObserver(contents),
@@ -20,8 +32,9 @@ TabUIHelper::~TabUIHelper() = default;
 
 std::u16string TabUIHelper::GetTitle() const {
   const std::u16string& contents_title = web_contents()->GetTitle();
-  if (!contents_title.empty())
+  if (!contents_title.empty()) {
     return contents_title;
+  }
 
 #if BUILDFLAG(IS_MAC)
   return l10n_util::GetStringUTF16(IDS_BROWSER_WINDOW_MAC_TAB_UNTITLED);
@@ -39,10 +52,17 @@ bool TabUIHelper::ShouldHideThrobber() const {
   // We want to hide a background tab's throbber during page load if it is
   // created by session restore. A restored tab's favicon is already fetched
   // by |SessionRestoreDelegate|.
-  if (created_by_session_restore_ && !was_active_at_least_once_)
+  if (created_by_session_restore_ && !was_active_at_least_once_) {
     return true;
+  }
 
   return false;
+}
+
+void TabUIHelper::SetWasActiveAtLeastOnce() {
+  if (!base::FeatureList::IsEnabled(kSessionRestoreShowThrobberOnVisible)) {
+    was_active_at_least_once_ = true;
+  }
 }
 
 void TabUIHelper::DidStopLoading() {
@@ -50,6 +70,13 @@ void TabUIHelper::DidStopLoading() {
   // latter navigations are not affected. Note that the prerendered page won't
   // reset the properties because DidStopLoading is not called for prerendering.
   created_by_session_restore_ = false;
+}
+
+void TabUIHelper::OnVisibilityChanged(content::Visibility visiblity) {
+  if (base::FeatureList::IsEnabled(kSessionRestoreShowThrobberOnVisible) &&
+      visiblity == content::Visibility::VISIBLE) {
+    was_active_at_least_once_ = true;
+  }
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(TabUIHelper);

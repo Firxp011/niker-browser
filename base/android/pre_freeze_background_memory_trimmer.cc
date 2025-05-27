@@ -19,13 +19,16 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/page_size.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/rand_util.h"
 #include "base/strings/strcat.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/time/time.h"
 #include "base/trace_event/base_tracing.h"
+#include "base/trace_event/named_trigger.h"  // no-presubmit-check
 
 namespace base::android {
 namespace {
@@ -36,8 +39,14 @@ namespace {
 enum class MetricsFailure {
   kAlreadyRunning,
   kSizeMismatch,
-  kMaxValue = kSizeMismatch
+  kMeasureFailure,
+  kMaxValue = kMeasureFailure
 };
+
+// These values are logged to UMA. Entries should not be renumbered and
+// numeric values should never be reused. Please keep in sync with
+// "PreFreezeReadProcMapsType" in tools/metrics/histograms/enums.xml.
+enum class ReadProcMaps { kFailed, kEmpty, kSuccess, kMaxValue = kSuccess };
 
 // This constant is chosen arbitrarily, to allow time for the background tasks
 // to finish running BEFORE collecting metrics.
@@ -45,6 +54,10 @@ const base::TimeDelta kDelayForMetrics = base::Seconds(2);
 
 uint64_t BytesToMiB(uint64_t v) {
   return v / 1024 / 1024;
+}
+
+uint64_t MiBToBytes(uint64_t v) {
+  return v * 1024 * 1024;
 }
 
 const char* GetProcessType() {
@@ -59,9 +72,18 @@ const char* GetProcessType() {
   return process_type;
 }
 
-std::string GetMetricName(std::string_view name, std::string_view suffix) {
+std::string GetPreFreezeMetricName(std::string_view name,
+                                   std::string_view suffix) {
   const char* process_type = GetProcessType();
   return StrCat({"Memory.PreFreeze2.", process_type, ".", name, ".", suffix});
+}
+
+std::string GetSelfCompactionMetricName(std::string_view name) {
+  return StrCat({"Memory.SelfCompact2.Renderer.", name});
+}
+
+std::string GetRunningCompactionMetricName(std::string_view name) {
+  return StrCat({"Memory.RunningCompact.Renderer.", name});
 }
 
 class PrivateMemoryFootprintMetric
@@ -85,15 +107,15 @@ class PrivateMemoryFootprintMetric
 
 bool PrivateMemoryFootprintMetric::did_register_ = false;
 
-void MaybeRecordMetric(std::optional<uint64_t> value_bytes,
-                       std::string_view metric_name,
-                       std::string_view suffix) {
+void MaybeRecordPreFreezeMetric(std::optional<uint64_t> value_bytes,
+                                std::string_view metric_name,
+                                std::string_view suffix) {
   // Skip recording the metric if we failed to get the PMF.
   if (!value_bytes.has_value()) {
     return;
   }
 
-  UmaHistogramMemoryMB(GetMetricName(metric_name, suffix),
+  UmaHistogramMemoryMB(GetPreFreezeMetricName(metric_name, suffix),
                        static_cast<int>(BytesToMiB(value_bytes.value())));
 }
 
@@ -134,13 +156,37 @@ bool IsMadvisePageoutSupported() {
 
 }  // namespace
 
-BASE_FEATURE(kOnPreFreezeMemoryTrim,
-             "OnPreFreezeMemoryTrim",
-             FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kShouldFreezeSelf,
+             "ShouldFreezeSelf",
+             FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kIsTrimMemoryBackgroundCritical,
-             "IsTrimMemoryBackgroundCritical",
-             FEATURE_ENABLED_BY_DEFAULT);
+// Max amount of compaction to do in each chunk, measured in MiB.
+BASE_FEATURE_PARAM(size_t,
+                   kShouldFreezeSelfMaxSize,
+                   &kShouldFreezeSelf,
+                   "max_chunk_size",
+                   10);
+
+// Delay between running pre-freeze tasks and doing self-freeze, measured in s.
+BASE_FEATURE_PARAM(size_t,
+                   kShouldFreezeSelfDelayAfterPreFreezeTasks,
+                   &kShouldFreezeSelf,
+                   "delay_after_tasks",
+                   30);
+
+BASE_FEATURE(kUseRunningCompact,
+             "UseRunningCompact",
+             FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE_PARAM(size_t,
+                   kUseRunningCompactDelayAfterPreFreezeTasks,
+                   &kUseRunningCompact,
+                   "running_compact_delay_after_tasks",
+                   30);
+BASE_FEATURE_PARAM(size_t,
+                   kUseRunningCompactMaxSize,
+                   &kUseRunningCompact,
+                   "running_compact_max_chunk_size",
+                   10);
 
 PreFreezeBackgroundMemoryTrimmer::PreFreezeBackgroundMemoryTrimmer()
     : supports_modern_trim_(BuildInfo::GetInstance()->sdk_int() >=
@@ -157,7 +203,7 @@ void PreFreezeBackgroundMemoryTrimmer::RecordMetrics() {
   // determine the current process, which is used for the names of metrics
   // below.
   CHECK(base::CommandLine::InitializedForCurrentProcess());
-  base::AutoLock locker(lock_);
+  base::AutoLock locker(lock());
   if (metrics_.size() != values_before_.size()) {
     UmaHistogramEnumeration("Memory.PreFreeze2.RecordMetricsFailureType",
                             MetricsFailure::kSizeMismatch);
@@ -171,9 +217,16 @@ void PreFreezeBackgroundMemoryTrimmer::RecordMetrics() {
 
     std::optional<uint64_t> value_after = metric->Measure();
 
-    MaybeRecordMetric(value_before, metric->name(), "Before");
-    MaybeRecordMetric(value_after, metric->name(), "After");
-    MaybeRecordMetric(Diff(value_before, value_after), metric->name(), "Diff");
+    if (!value_after) {
+      UmaHistogramEnumeration("Memory.PreFreeze2.RecordMetricsFailureType",
+                              MetricsFailure::kMeasureFailure);
+      continue;
+    }
+
+    MaybeRecordPreFreezeMetric(value_before, metric->name(), "Before");
+    MaybeRecordPreFreezeMetric(value_after, metric->name(), "After");
+    MaybeRecordPreFreezeMetric(Diff(value_before, value_after), metric->name(),
+                               "Diff");
   }
 
   values_before_.clear();
@@ -230,6 +283,107 @@ void PreFreezeBackgroundMemoryTrimmer::PostMetricsTask() {
       kDelayForMetrics);
 }
 
+void PreFreezeBackgroundMemoryTrimmer::CompactionMetric::
+    MaybeRecordCompactionMetrics() {
+  // If we did not record smaps_rollup for any reason, such as returning to
+  // foreground, being frozen by App Freezer, or failing to read
+  // /proc/self/smaps_rollup, skip emitting metrics.
+  if (!smaps_before_.has_value() || !smaps_after_.has_value() ||
+      !smaps_after_1s_.has_value() || !smaps_after_10s_.has_value() ||
+      !smaps_after_60s_.has_value()) {
+    return;
+  }
+
+  if (!ShouldContinueCompaction(compaction_triggered_at_)) {
+    return;
+  }
+
+  // Record absolute values of each metric.
+  RecordCompactionMetrics(*smaps_before_, "Before");
+  RecordCompactionMetrics(*smaps_after_, "After");
+  RecordCompactionMetrics(*smaps_after_1s_, "After1s");
+  RecordCompactionMetrics(*smaps_after_10s_, "After10s");
+  RecordCompactionMetrics(*smaps_after_60s_, "After60s");
+
+  // Record diff of before and after to see how much memory was compacted.
+  RecordCompactionDiffMetrics(*smaps_before_, *smaps_after_, "BeforeAfter");
+
+  // Record diff after a delay, so we can see if any memory comes back after
+  // compaction.
+  RecordCompactionDiffMetrics(*smaps_after_, *smaps_after_1s_, "After1s");
+  RecordCompactionDiffMetrics(*smaps_after_, *smaps_after_10s_, "After10s");
+  RecordCompactionDiffMetrics(*smaps_after_, *smaps_after_60s_, "After60s");
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionMetric::RecordCompactionMetric(
+    size_t value_bytes,
+    std::string_view metric_name,
+    std::string_view suffix) {
+  UmaHistogramMemoryMB(GetMetricName(metric_name, suffix),
+                       static_cast<int>(BytesToMiB(value_bytes)));
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionMetric::
+    RecordCompactionMetrics(const debug::SmapsRollup& value,
+                            std::string_view suffix) {
+  RecordCompactionMetric(value.rss, "Rss", suffix);
+  RecordCompactionMetric(value.pss, "Pss", suffix);
+  RecordCompactionMetric(value.pss_anon, "PssAnon", suffix);
+  RecordCompactionMetric(value.pss_file, "PssFile", suffix);
+  RecordCompactionMetric(value.swap_pss, "SwapPss", suffix);
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionMetric::
+    RecordCompactionDiffMetric(size_t before_value_bytes,
+                               size_t after_value_bytes,
+                               std::string_view name,
+                               std::string_view suffix) {
+  size_t diff_non_negative = std::max(before_value_bytes, after_value_bytes) -
+                             std::min(before_value_bytes, after_value_bytes);
+  const std::string full_suffix = StrCat(
+      {"Diff.", suffix, ".",
+       before_value_bytes < after_value_bytes ? "Increase" : "Decrease"});
+  RecordCompactionMetric(diff_non_negative, name, full_suffix);
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionMetric::
+    RecordCompactionDiffMetrics(const debug::SmapsRollup& before,
+                                const debug::SmapsRollup& after,
+                                std::string_view suffix) {
+  RecordCompactionDiffMetric(before.rss, after.rss, "Rss", suffix);
+  RecordCompactionDiffMetric(before.pss, after.pss, "Pss", suffix);
+  RecordCompactionDiffMetric(before.pss_anon, after.pss_anon, "PssAnon",
+                             suffix);
+  RecordCompactionDiffMetric(before.pss_file, after.pss_file, "PssFile",
+                             suffix);
+  RecordCompactionDiffMetric(before.swap_pss, after.swap_pss, "SwapPss",
+                             suffix);
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionMetric::RecordSmapsRollup(
+    std::optional<debug::SmapsRollup>* target) {
+  if (!ShouldContinueCompaction(compaction_triggered_at_)) {
+    return;
+  }
+
+  *target = debug::ReadAndParseSmapsRollup();
+
+  MaybeRecordCompactionMetrics();
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionMetric::
+    RecordSmapsRollupWithDelay(std::optional<debug::SmapsRollup>* target,
+                               base::TimeDelta delay) {
+  base::ThreadPool::PostDelayedTask(
+      FROM_HERE, {base::TaskPriority::BEST_EFFORT, MayBlock()},
+      base::BindOnce(&PreFreezeBackgroundMemoryTrimmer::CompactionMetric::
+                         RecordSmapsRollup,
+                     // |target| is a member a of |this|, so it's lifetime is
+                     // always ok here.
+                     this, base::Unretained(target)),
+      delay);
+}
+
 // static
 void PreFreezeBackgroundMemoryTrimmer::PostDelayedBackgroundTask(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
@@ -258,14 +412,6 @@ void PreFreezeBackgroundMemoryTrimmer::PostDelayedBackgroundTaskInternal(
 
   RegisterPrivateMemoryFootprintMetric();
 
-  if (!base::FeatureList::IsEnabled(kOnPreFreezeMemoryTrim)) {
-    task_runner->PostDelayedTask(
-        from_here,
-        BindOnce(std::move(task), MemoryReductionTaskContext::kDelayExpired),
-        delay);
-    return;
-  }
-
   PostDelayedBackgroundTaskModern(task_runner, from_here, std::move(task),
                                   delay);
 }
@@ -289,7 +435,7 @@ void PreFreezeBackgroundMemoryTrimmer::PostDelayedBackgroundTaskModern(
     return;
   }
 
-  base::AutoLock locker(lock_);
+  base::AutoLock locker(lock());
   PostDelayedBackgroundTaskModernHelper(std::move(task_runner), from_here,
                                         std::move(task), delay);
 }
@@ -310,7 +456,7 @@ PreFreezeBackgroundMemoryTrimmer::PostDelayedBackgroundTaskModernHelper(
 // static
 void PreFreezeBackgroundMemoryTrimmer::RegisterMemoryMetric(
     const PreFreezeMetric* metric) {
-  base::AutoLock locker(Instance().lock_);
+  base::AutoLock locker(lock());
   Instance().RegisterMemoryMetricInternal(metric);
 }
 
@@ -328,7 +474,7 @@ void PreFreezeBackgroundMemoryTrimmer::RegisterMemoryMetricInternal(
 // static
 void PreFreezeBackgroundMemoryTrimmer::UnregisterMemoryMetric(
     const PreFreezeMetric* metric) {
-  base::AutoLock locker(Instance().lock_);
+  base::AutoLock locker(lock());
   Instance().UnregisterMemoryMetricInternal(metric);
 }
 
@@ -344,49 +490,261 @@ void PreFreezeBackgroundMemoryTrimmer::UnregisterMemoryMetricInternal(
   metrics_.erase(metrics_.begin() + index);
 }
 
+void PreFreezeBackgroundMemoryTrimmer::SetOnStartSelfCompactionCallback(
+    base::RepeatingCallback<void(void)> callback) {
+  base::AutoLock locker(lock());
+  Instance().on_self_compact_callback_ = callback;
+}
+
 // static
-bool PreFreezeBackgroundMemoryTrimmer::SelfCompactionIsSupported() {
+bool PreFreezeBackgroundMemoryTrimmer::CompactionIsSupported() {
   return IsMadvisePageoutSupported();
 }
 
 // static
-std::optional<int64_t> PreFreezeBackgroundMemoryTrimmer::CompactSelf() {
-  // MADV_PAGEOUT was only added in Linux 5.4, so do nothing in earlier
-  // versions.
-  if (!SelfCompactionIsSupported()) {
-    return std::nullopt;
-  }
-
-  std::vector<debug::MappedMemoryRegion> regions;
-
-  std::string proc_maps;
-  if (!debug::ReadProcMaps(&proc_maps) || !ParseProcMaps(proc_maps, &regions)) {
-    return std::nullopt;
-  }
-
-  if (regions.size() == 0) {
-    return std::nullopt;
-  }
-
-  // TODO(crbug.com/344547190): This may run for a long time. Add a way to
-  // cancel this part-way through if we return to the foreground while this is
-  // running.
-  return CompactMemory(std::move(regions));
+bool PreFreezeBackgroundMemoryTrimmer::ShouldContinueCompaction(
+    const PreFreezeBackgroundMemoryTrimmer::CompactionState& state) {
+  return ShouldContinueCompaction(state.triggered_at_);
 }
 
 // static
-std::optional<int64_t> PreFreezeBackgroundMemoryTrimmer::CompactRegion(
+bool PreFreezeBackgroundMemoryTrimmer::ShouldContinueCompaction(
+    base::TimeTicks compaction_triggered_at) {
+  base::AutoLock locker(lock());
+  return Instance().compaction_last_cancelled_ < compaction_triggered_at;
+}
+
+void PreFreezeBackgroundMemoryTrimmer::MaybePostCompactionTask(
+    std::unique_ptr<CompactionState> state,
+    scoped_refptr<CompactionMetric> metric) {
+  TRACE_EVENT0("base", "MaybePostCompactionTask");
+  if (ShouldContinueCompaction(*state) && !state->regions_.empty()) {
+    auto task_runner = state->task_runner_;
+    task_runner->PostDelayedTask(
+        FROM_HERE,
+        // |base::Unretained| is safe here because we never destroy |this|.
+        base::BindOnce(&PreFreezeBackgroundMemoryTrimmer::CompactionTask,
+                       base::Unretained(this), std::move(state),
+                       std::move(metric)),
+        GetDelayBetweenCompaction());
+  } else {
+    FinishCompaction(std::move(state), std::move(metric));
+  }
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionTask(
+    std::unique_ptr<CompactionState> state,
+    scoped_refptr<CompactionMetric> metric) {
+  if (!ShouldContinueCompaction(*state)) {
+    return;
+  }
+
+  TRACE_EVENT0("base", "CompactionTask");
+
+  CompactMemory(&state->regions_, state->max_bytes_);
+
+  MaybePostCompactionTask(std::move(state), std::move(metric));
+}
+
+void PreFreezeBackgroundMemoryTrimmer::StartCompaction(
+    std::unique_ptr<CompactionState> state) {
+  scoped_refptr<CompactionMetric> metric = state->MakeCompactionMetric();
+  TRACE_EVENT0("base", "StartCompaction");
+  base::trace_event::EmitNamedTrigger("start-self-compaction");
+  {
+    base::AutoLock locker(lock());
+    process_compacted_metadata_.emplace(
+        "PreFreezeBackgroundMemoryTrimmer.ProcessCompacted",
+        /*is_compacted=*/1, base::SampleMetadataScope::kProcess);
+    if (on_self_compact_callback_) {
+      on_self_compact_callback_.Run();
+    }
+  }
+  metric->RecordBeforeMetrics();
+  MaybePostCompactionTask(std::move(state), std::move(metric));
+}
+
+void PreFreezeBackgroundMemoryTrimmer::FinishCompaction(
+    std::unique_ptr<CompactionState> state,
+    scoped_refptr<CompactionMetric> metric) {
+  TRACE_EVENT0("base", "FinishCompaction");
+  {
+    base::AutoLock locker(lock());
+    compaction_last_finished_ = base::TimeTicks::Now();
+  }
+  if (ShouldContinueCompaction(*state)) {
+    metric->RecordDelayedMetrics();
+    base::AutoLock locker(lock());
+    metric->RecordTimeMetrics(compaction_last_finished_,
+                              compaction_last_cancelled_);
+  }
+}
+
+// static
+base::TimeDelta PreFreezeBackgroundMemoryTrimmer::GetDelayBetweenCompaction() {
+  // We choose a random, small amount of time here, so that we are not trying
+  // to compact in every process at the same time.
+  return base::Milliseconds(base::RandInt(100, 300));
+}
+
+// static
+void PreFreezeBackgroundMemoryTrimmer::MaybeCancelCompaction(
+    CompactCancellationReason cancellation_reason) {
+  Instance().MaybeCancelCompactionInternal(cancellation_reason);
+}
+
+void PreFreezeBackgroundMemoryTrimmer::MaybeCancelCompactionInternal(
+    CompactCancellationReason cancellation_reason) {
+  base::AutoLock locker(lock());
+  process_compacted_metadata_.reset();
+  // Check for the last time cancelled here in order to avoid recording this
+  // metric multiple times. Also, only record this metric if a compaction is
+  // currently running.
+  if (compaction_last_cancelled_ < compaction_last_triggered_ &&
+      compaction_last_finished_ < compaction_last_triggered_) {
+    UmaHistogramEnumeration(
+        "Memory.RunningOrSelfCompact.Renderer.CancellationReason",
+        cancellation_reason);
+  }
+  compaction_last_finished_ = compaction_last_cancelled_ =
+      base::TimeTicks::Now();
+}
+
+PreFreezeBackgroundMemoryTrimmer::CompactionState::CompactionState(
+    scoped_refptr<SequencedTaskRunner> task_runner,
+    base::TimeTicks triggered_at,
+    uint64_t max_bytes)
+    : task_runner_(std::move(task_runner)),
+      triggered_at_(triggered_at),
+      max_bytes_(max_bytes) {}
+
+PreFreezeBackgroundMemoryTrimmer::CompactionState::~CompactionState() = default;
+
+PreFreezeBackgroundMemoryTrimmer::SelfCompactionState::SelfCompactionState(
+    scoped_refptr<SequencedTaskRunner> task_runner,
+    base::TimeTicks triggered_at)
+    : SelfCompactionState(std::move(task_runner),
+                          triggered_at,
+                          MiBToBytes(kShouldFreezeSelfMaxSize.Get())) {}
+
+PreFreezeBackgroundMemoryTrimmer::SelfCompactionState::SelfCompactionState(
+    scoped_refptr<SequencedTaskRunner> task_runner,
+    base::TimeTicks triggered_at,
+    uint64_t max_bytes)
+    : CompactionState(std::move(task_runner), triggered_at, max_bytes) {}
+
+bool PreFreezeBackgroundMemoryTrimmer::SelfCompactionState::IsFeatureEnabled()
+    const {
+  return base::FeatureList::IsEnabled(kShouldFreezeSelf);
+}
+
+base::TimeDelta PreFreezeBackgroundMemoryTrimmer::SelfCompactionState::
+    GetDelayAfterPreFreezeTasks() const {
+  return base::Seconds(kShouldFreezeSelfDelayAfterPreFreezeTasks.Get());
+}
+
+std::string
+PreFreezeBackgroundMemoryTrimmer::SelfCompactionState::GetMetricName(
+    std::string_view name) const {
+  return GetSelfCompactionMetricName(name);
+}
+
+scoped_refptr<PreFreezeBackgroundMemoryTrimmer::CompactionMetric>
+PreFreezeBackgroundMemoryTrimmer::SelfCompactionState::MakeCompactionMetric()
+    const {
+  return MakeRefCounted<CompactionMetric>(
+      "Memory.SelfCompact2.Renderer.", triggered_at_, base::TimeTicks::Now());
+}
+
+PreFreezeBackgroundMemoryTrimmer::RunningCompactionState::
+    RunningCompactionState(scoped_refptr<SequencedTaskRunner> task_runner,
+                           base::TimeTicks triggered_at)
+    : RunningCompactionState(std::move(task_runner),
+                             triggered_at,
+                             MiBToBytes(kUseRunningCompactMaxSize.Get())) {}
+
+PreFreezeBackgroundMemoryTrimmer::RunningCompactionState::
+    RunningCompactionState(scoped_refptr<SequencedTaskRunner> task_runner,
+                           base::TimeTicks triggered_at,
+                           uint64_t max_bytes)
+    : CompactionState(std::move(task_runner), triggered_at, max_bytes) {}
+
+bool PreFreezeBackgroundMemoryTrimmer::RunningCompactionState::
+    IsFeatureEnabled() const {
+  return base::FeatureList::IsEnabled(kUseRunningCompact);
+}
+
+base::TimeDelta PreFreezeBackgroundMemoryTrimmer::RunningCompactionState::
+    GetDelayAfterPreFreezeTasks() const {
+  return base::Seconds(kUseRunningCompactDelayAfterPreFreezeTasks.Get());
+}
+
+std::string
+PreFreezeBackgroundMemoryTrimmer::RunningCompactionState::GetMetricName(
+    std::string_view name) const {
+  return GetRunningCompactionMetricName(name);
+}
+
+scoped_refptr<PreFreezeBackgroundMemoryTrimmer::CompactionMetric>
+PreFreezeBackgroundMemoryTrimmer::RunningCompactionState::MakeCompactionMetric()
+    const {
+  return MakeRefCounted<CompactionMetric>(
+      "Memory.RunningCompact.Renderer.", triggered_at_, base::TimeTicks::Now());
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionState::MaybeReadProcMaps() {
+  DCHECK(regions_.empty());
+  auto did_read_proc_maps = ReadProcMaps::kSuccess;
+  if (IsFeatureEnabled()) {
+    std::string proc_maps;
+    if (!debug::ReadProcMaps(&proc_maps) ||
+        !ParseProcMaps(proc_maps, &regions_)) {
+      did_read_proc_maps = ReadProcMaps::kFailed;
+    } else if (regions_.size() == 0) {
+      did_read_proc_maps = ReadProcMaps::kEmpty;
+    }
+  }
+
+  UmaHistogramEnumeration(GetMetricName("ReadProcMaps"), did_read_proc_maps);
+}
+
+// static
+void PreFreezeBackgroundMemoryTrimmer::CompactSelf(
+    std::unique_ptr<CompactionState> state) {
+  // MADV_PAGEOUT was only added in Linux 5.4, so do nothing in earlier
+  // versions.
+  if (!CompactionIsSupported()) {
+    return;
+  }
+
+  if (!ShouldContinueCompaction(*state)) {
+    return;
+  }
+
+  TRACE_EVENT0("base", "CompactSelf");
+  state->MaybeReadProcMaps();
+
+  // We still start the task in the control group, in order to record metrics.
+  Instance().StartCompaction(std::move(state));
+}
+
+// static
+std::optional<uint64_t> PreFreezeBackgroundMemoryTrimmer::CompactRegion(
     debug::MappedMemoryRegion region) {
 #if defined(MADV_PAGEOUT)
+  using Permission = debug::MappedMemoryRegion::Permission;
   // Skip file-backed regions
   if (region.inode != 0 || region.dev_major != 0) {
     return 0;
   }
   // Skip shared regions
-  if ((region.permissions & debug::MappedMemoryRegion::Permission::PRIVATE) ==
-      0) {
+  if ((region.permissions & Permission::PRIVATE) == 0) {
     return 0;
   }
+
+  const bool is_inaccessible =
+      (region.permissions &
+       (Permission::READ | Permission::WRITE | Permission::EXECUTE)) == 0;
 
   TRACE_EVENT1("base", __PRETTY_FUNCTION__, "size", region.end - region.start);
 
@@ -408,24 +766,30 @@ std::optional<int64_t> PreFreezeBackgroundMemoryTrimmer::CompactRegion(
     return 0;
   }
 
-  return region.end - region.start;
+  return is_inaccessible ? 0 : region.end - region.start;
 #else
   return std::nullopt;
 #endif
 }
 
 // static
-std::optional<int64_t> PreFreezeBackgroundMemoryTrimmer::CompactMemory(
-    std::vector<debug::MappedMemoryRegion> regions) {
-  TRACE_EVENT1("base", __PRETTY_FUNCTION__, "count", regions.size());
-  int64_t total_bytes_processed = 0;
-  for (const auto& region : regions) {
+std::optional<uint64_t> PreFreezeBackgroundMemoryTrimmer::CompactMemory(
+    std::vector<debug::MappedMemoryRegion>* regions,
+    const uint64_t max_bytes) {
+  TRACE_EVENT1("base", __PRETTY_FUNCTION__, "count", regions->size());
+  DCHECK(!regions->empty());
+
+  uint64_t total_bytes_processed = 0;
+  do {
+    const auto region = regions->back();
+    regions->pop_back();
     const auto bytes_processed = CompactRegion(region);
     if (!bytes_processed) {
       return std::nullopt;
     }
     total_bytes_processed += bytes_processed.value();
-  }
+  } while (!regions->empty() && total_bytes_processed < max_bytes);
+
   return total_bytes_processed;
 }
 
@@ -437,18 +801,52 @@ void PreFreezeBackgroundMemoryTrimmer::PostMetricsTasksIfModern() {
 }
 
 // static
+void PreFreezeBackgroundMemoryTrimmer::OnSelfFreeze() {
+  TRACE_EVENT0("base", "OnSelfFreeze");
+
+  auto task_runner = base::ThreadPool::CreateSequencedTaskRunner(
+      {base::TaskPriority::BEST_EFFORT, MayBlock()});
+  Instance().OnTriggerCompact<SelfCompactionState>(std::move(task_runner));
+}
+
+template <class State>
+void PreFreezeBackgroundMemoryTrimmer::OnTriggerCompact(
+    scoped_refptr<SequencedTaskRunner> task_runner) {
+  const auto triggered_at = base::TimeTicks::Now();
+  base::AutoLock locker(lock());
+  compaction_last_triggered_ = triggered_at;
+  auto state = std::make_unique<State>(task_runner, triggered_at);
+  if (state->IsFeatureEnabled()) {
+    RunPreFreezeTasks();
+  }
+  const auto delay_after_pre_freeze_tasks =
+      state->GetDelayAfterPreFreezeTasks();
+  task_runner->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&PreFreezeBackgroundMemoryTrimmer::CompactSelf,
+                     base::Unretained(this), std::move(state)),
+      delay_after_pre_freeze_tasks);
+}
+
+// static
+void PreFreezeBackgroundMemoryTrimmer::OnRunningCompact() {
+  TRACE_EVENT0("base", "OnRunningCompact");
+
+  auto task_runner = base::ThreadPool::CreateSequencedTaskRunner(
+      {base::TaskPriority::BEST_EFFORT, MayBlock()});
+  Instance().OnTriggerCompact<RunningCompactionState>(std::move(task_runner));
+}
+
+// static
 void PreFreezeBackgroundMemoryTrimmer::OnPreFreeze() {
+  // If we have scheduled a self compaction task, cancel it, since App Freezer
+  // will handle the compaction for us, and we don't want to potentially run
+  // self compaction after we have resumed.
+  MaybeCancelCompaction(CompactCancellationReason::kAppFreezer);
   Instance().OnPreFreezeInternal();
 }
 
-void PreFreezeBackgroundMemoryTrimmer::OnPreFreezeInternal() {
-  base::AutoLock locker(lock_);
-  PostMetricsTasksIfModern();
-
-  if (!ShouldUseModernTrim()) {
-    return;
-  }
-
+void PreFreezeBackgroundMemoryTrimmer::RunPreFreezeTasks() {
   // We check |num_pending_tasks-- > 0| so that we have an upper limit on the
   // number of tasks that we run.
   // We check |!background_tasks_.empty()| so that we exit as soon as we have
@@ -469,9 +867,20 @@ void PreFreezeBackgroundMemoryTrimmer::OnPreFreezeInternal() {
     // (1) To avoid holding it too long while running all the background tasks.
     // (2) To prevent a deadlock if the |background_task| needs to acquire the
     //     lock (e.g. to post another task).
-    base::AutoUnlock unlocker(lock_);
+    base::AutoUnlock unlocker(lock());
     BackgroundTask::RunNow(std::move(background_task));
   }
+}
+
+void PreFreezeBackgroundMemoryTrimmer::OnPreFreezeInternal() {
+  base::AutoLock locker(lock());
+  PostMetricsTasksIfModern();
+
+  if (!ShouldUseModernTrim()) {
+    return;
+  }
+
+  RunPreFreezeTasks();
 }
 
 // static
@@ -482,13 +891,13 @@ void PreFreezeBackgroundMemoryTrimmer::UnregisterBackgroundTask(
 
 void PreFreezeBackgroundMemoryTrimmer::UnregisterBackgroundTaskInternal(
     BackgroundTask* timer) {
-  base::AutoLock locker(lock_);
+  base::AutoLock locker(lock());
   std::erase_if(background_tasks_, [&](auto& t) { return t.get() == timer; });
 }
 
 // static
 void PreFreezeBackgroundMemoryTrimmer::RegisterPrivateMemoryFootprintMetric() {
-  base::AutoLock locker(Instance().lock_);
+  base::AutoLock locker(lock());
   static base::NoDestructor<PrivateMemoryFootprintMetric> pmf_metric;
   if (!PrivateMemoryFootprintMetric::did_register_) {
     PrivateMemoryFootprintMetric::did_register_ = true;
@@ -503,14 +912,12 @@ bool PreFreezeBackgroundMemoryTrimmer::SupportsModernTrim() {
 
 // static
 bool PreFreezeBackgroundMemoryTrimmer::ShouldUseModernTrim() {
-  return SupportsModernTrim() &&
-         base::FeatureList::IsEnabled(kOnPreFreezeMemoryTrim);
+  return SupportsModernTrim();
 }
 
 // static
 bool PreFreezeBackgroundMemoryTrimmer::IsTrimMemoryBackgroundCritical() {
-  return SupportsModernTrim() &&
-         base::FeatureList::IsEnabled(kIsTrimMemoryBackgroundCritical);
+  return SupportsModernTrim();
 }
 
 // static
@@ -521,33 +928,41 @@ void PreFreezeBackgroundMemoryTrimmer::SetSupportsModernTrimForTesting(
 
 // static
 void PreFreezeBackgroundMemoryTrimmer::ClearMetricsForTesting() {
-  base::AutoLock locker(Instance().lock_);
+  base::AutoLock locker(lock());
   Instance().metrics_.clear();
   PrivateMemoryFootprintMetric::did_register_ = false;
 }
 
 bool PreFreezeBackgroundMemoryTrimmer::DidRegisterTasksForTesting() const {
-  base::AutoLock locker(lock_);
+  base::AutoLock locker(lock());
   return metrics_.size() != 0;
 }
 
 size_t
 PreFreezeBackgroundMemoryTrimmer::GetNumberOfPendingBackgroundTasksForTesting()
     const {
-  base::AutoLock locker(lock_);
+  base::AutoLock locker(lock());
   return background_tasks_.size();
 }
 
 size_t PreFreezeBackgroundMemoryTrimmer::GetNumberOfKnownMetricsForTesting()
     const {
-  base::AutoLock locker(lock_);
+  base::AutoLock locker(lock());
   return metrics_.size();
 }
 
 size_t PreFreezeBackgroundMemoryTrimmer::GetNumberOfValuesBeforeForTesting()
     const {
-  base::AutoLock locker(lock_);
+  base::AutoLock locker(lock());
   return values_before_.size();
+}
+
+// static
+void PreFreezeBackgroundMemoryTrimmer::ResetCompactionForTesting() {
+  base::AutoLock locker(lock());
+  Instance().compaction_last_cancelled_ = base::TimeTicks::Min();
+  Instance().compaction_last_finished_ = base::TimeTicks::Min();
+  Instance().compaction_last_triggered_ = base::TimeTicks::Min();
 }
 
 // static
@@ -561,6 +976,7 @@ void PreFreezeBackgroundMemoryTrimmer::BackgroundTask::RunNow(
     return;
   }
 
+  DCHECK_CALLED_ON_VALID_SEQUENCE(background_task->sequence_checker_);
   // We check that the task has not been run already. If it has, we do not run
   // it again.
   if (background_task->task_handle_.IsValid()) {
@@ -573,6 +989,7 @@ void PreFreezeBackgroundMemoryTrimmer::BackgroundTask::RunNow(
 }
 
 void PreFreezeBackgroundMemoryTrimmer::BackgroundTask::CancelTask() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (task_handle_.IsValid()) {
     task_handle_.CancelTask();
     PreFreezeBackgroundMemoryTrimmer::UnregisterBackgroundTask(this);
@@ -594,13 +1011,17 @@ PreFreezeBackgroundMemoryTrimmer::BackgroundTask::Create(
 
 PreFreezeBackgroundMemoryTrimmer::BackgroundTask::BackgroundTask(
     scoped_refptr<base::SequencedTaskRunner> task_runner)
-    : task_runner_(task_runner) {}
+    : task_runner_(task_runner) {
+  DETACH_FROM_SEQUENCE(sequence_checker_);
+}
 
 PreFreezeBackgroundMemoryTrimmer::BackgroundTask::~BackgroundTask() = default;
 
 void PreFreezeBackgroundMemoryTrimmer::BackgroundTask::Run(
     MemoryReductionTaskContext from_pre_freeze) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!task_handle_.IsValid());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   std::move(task_).Run(from_pre_freeze);
 }
 
@@ -608,7 +1029,9 @@ void PreFreezeBackgroundMemoryTrimmer::BackgroundTask::Start(
     const base::Location& from_here,
     base::TimeDelta delay,
     OnceCallback<void(MemoryReductionTaskContext)> task) {
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   task_ = std::move(task);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   task_handle_ = task_runner_->PostCancelableDelayedTask(
       subtle::PostDelayedTaskPassKey(), from_here,
       base::BindOnce(
@@ -625,5 +1048,47 @@ PreFreezeBackgroundMemoryTrimmer::PreFreezeMetric::PreFreezeMetric(
     : name_(name) {}
 
 PreFreezeBackgroundMemoryTrimmer::PreFreezeMetric::~PreFreezeMetric() = default;
+
+PreFreezeBackgroundMemoryTrimmer::CompactionMetric::CompactionMetric(
+    const std::string& name,
+    base::TimeTicks triggered_at,
+    base::TimeTicks started_at)
+    : name_(name),
+      compaction_triggered_at_(triggered_at),
+      compaction_started_at_(started_at) {}
+PreFreezeBackgroundMemoryTrimmer::CompactionMetric::~CompactionMetric() =
+    default;
+
+std::string PreFreezeBackgroundMemoryTrimmer::CompactionMetric::GetMetricName(
+    std::string_view name) const {
+  return StrCat({name_, name});
+}
+
+std::string PreFreezeBackgroundMemoryTrimmer::CompactionMetric::GetMetricName(
+    std::string_view name,
+    std::string_view suffix) const {
+  return StrCat({name_, name, ".", suffix});
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionMetric::RecordBeforeMetrics() {
+  RecordSmapsRollup(&smaps_before_);
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionMetric::
+    RecordDelayedMetrics() {
+  RecordSmapsRollup(&smaps_after_);
+  RecordSmapsRollupWithDelay(&smaps_after_1s_, base::Seconds(1));
+  RecordSmapsRollupWithDelay(&smaps_after_10s_, base::Seconds(10));
+  RecordSmapsRollupWithDelay(&smaps_after_60s_, base::Seconds(60));
+}
+
+void PreFreezeBackgroundMemoryTrimmer::CompactionMetric::RecordTimeMetrics(
+    base::TimeTicks last_finished,
+    base::TimeTicks last_cancelled) {
+  UmaHistogramMediumTimes(GetMetricName("SelfCompactionTime"),
+                          last_finished - compaction_started_at_);
+  UmaHistogramMediumTimes(GetMetricName("TimeSinceLastCancel"),
+                          last_finished - last_cancelled);
+}
 
 }  // namespace base::android

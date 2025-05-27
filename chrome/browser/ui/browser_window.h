@@ -15,7 +15,6 @@
 #include "base/functional/callback_helpers.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/link_capturing/intent_picker_info.h"
 #include "chrome/browser/lifetime/browser_close_manager.h"
 #include "chrome/browser/share/share_attempt.h"
@@ -28,8 +27,6 @@
 #include "chrome/browser/ui/page_action/page_action_icon_type.h"
 #include "chrome/browser/ui/translate/partial_translate_bubble_model.h"
 #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_entry_id.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_enums.h"
 #include "chrome/browser/ui/webui/tab_search/tab_search.mojom.h"
 #include "chrome/common/buildflags.h"
 #include "components/content_settings/core/common/content_settings_types.h"
@@ -93,7 +90,7 @@ namespace ui {
 class ColorProvider;
 class NativeTheme;
 class ThemeProvider;
-}
+}  // namespace ui
 
 namespace views {
 class Button;
@@ -170,6 +167,9 @@ class BrowserWindow : public ui::BaseWindow,
   // will return an error.
   virtual bool IsOnCurrentWorkspace() const = 0;
 
+  // Returns true if the browser window is visible on the screen.
+  virtual bool IsVisibleOnScreen() const = 0;
+
   // Sets the shown |ratio| of the browser's top controls (a.k.a. top-chrome) as
   // a result of gesture scrolling in |web_contents|.
   virtual void SetTopControlsShownRatio(content::WebContents* web_contents,
@@ -231,8 +231,10 @@ class BrowserWindow : public ui::BaseWindow,
   // Propagates to the browser that gesture scrolling has changed state.
   virtual void SetTopControlsGestureScrollInProgress(bool in_progress) = 0;
 
-  // Return the status bubble associated with the frame
-  virtual StatusBubble* GetStatusBubble() = 0;
+  // Return the status bubble(s) associated with the frame. In a split view,
+  // there will be multiple status bubbles with the active one listed first.
+  // It is possible for this to be empty.
+  virtual std::vector<StatusBubble*> GetStatusBubbles() = 0;
 
   // Inform the frame that the selected tab favicon or title has changed. Some
   // frames may need to refresh their title bar.
@@ -256,6 +258,15 @@ class BrowserWindow : public ui::BaseWindow,
 
   // Sets the starred state for the current tab.
   virtual void SetStarredState(bool is_starred) = 0;
+
+  // Checks if the browser popup is a tab modal popup.
+  virtual bool IsTabModalPopupDeprecated() const = 0;
+
+  // Sets whether the browser popup is a tab modal popup. Tab modal popups, used
+  // by autofill features, intentionally disable save card prompts because they
+  // are not intended for saving new card details.
+  virtual void SetIsTabModalPopupDeprecated(
+      bool is_tab_modal_popup_deprecated) = 0;
 
   // Called when the active tab changes.  Subclasses which implement
   // TabStripModelObserver should implement this instead of ActiveTabChanged();
@@ -329,6 +340,12 @@ class BrowserWindow : public ui::BaseWindow,
   // Updates whether or not the custom tab bar is visible. Animates the
   // transition if |animate| is true.
   virtual void UpdateCustomTabBarVisibility(bool visible, bool animate) = 0;
+
+  // Updates the visibility of the scrim that covers the content area.
+  virtual void SetContentScrimVisibility(bool visible) = 0;
+
+  // Updates the visibility of the scrim that covers the devtools area.
+  virtual void SetDevToolsScrimVisibility(bool visible) = 0;
 
   // Resets the toolbar's tab state for |contents|.
   virtual void ResetToolbarTabState(content::WebContents* contents) = 0;
@@ -419,14 +436,6 @@ class BrowserWindow : public ui::BaseWindow,
   // |already_bookmarked| is true if the url is already bookmarked.
   virtual void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) = 0;
 
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  // Checks if the user is eligible for the iOS Password Promo Bubble. If they
-  // are, make a final eligibility check with a call to the segmentation
-  // platform with `MaybeShowIOSPasswordPromoBubble` passed as callback. That
-  // method may create/show a bubble to the user.
-  virtual void VerifyUserEligibilityIOSPasswordPromoBubble() = 0;
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
-
   // Shows the Screenshot bubble.
   virtual sharing_hub::ScreenshotCapturedBubble* ShowScreenshotCapturedBubble(
       content::WebContents* contents,
@@ -495,6 +504,9 @@ class BrowserWindow : public ui::BaseWindow,
   // Returns the TopContainerView.
   virtual views::View* GetTopContainer() = 0;
 
+  // Returns the LensOverlayView.
+  virtual views::View* GetLensOverlayView() = 0;
+
   // Returns the DownloadBubbleUIController. Returns null if Download Bubble
   // UI is not enabled, or if the download toolbar button does not exist.
   virtual DownloadBubbleUIController* GetDownloadBubbleUIController() = 0;
@@ -514,6 +526,15 @@ class BrowserWindow : public ui::BaseWindow,
   // Shows the app menu (for accessibility).
   virtual void ShowAppMenu() = 0;
 
+  // Allows the BrowserWindow object to handle the specified mouse event
+  // before sending it to the renderer.
+  virtual bool PreHandleMouseEvent(const blink::WebMouseEvent& event) = 0;
+  // Allows the BrowserWindow object to handle a mouse drag update
+  // before sending it to the renderer.
+  // `point` is relative to the content view.
+  virtual void PreHandleDragUpdate(const content::DropData& drop_data,
+                                   const gfx::PointF& point) = 0;
+  virtual void PreHandleDragExit() = 0;
   // Allows the BrowserWindow object to handle the specified keyboard event
   // before sending it to the renderer.
   virtual content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
@@ -599,6 +620,12 @@ class BrowserWindow : public ui::BaseWindow,
   virtual void CreateTabSearchBubble(
       tab_search::mojom::TabSearchSection section,
       tab_search::mojom::TabOrganizationFeature organization_feature) = 0;
+  void CreateTabSearchBubble(tab_search::mojom::TabSearchSection section =
+                                 tab_search::mojom::TabSearchSection::kSearch) {
+    CreateTabSearchBubble(section,
+                          tab_search::mojom::TabOrganizationFeature::kNone);
+  }
+
   // Closes the tab search bubble if open for the given browser instance.
   virtual void CloseTabSearchBubble() = 0;
 
@@ -612,9 +639,9 @@ class BrowserWindow : public ui::BaseWindow,
   // of a full titlebar. This is only supported for desktop web apps.
   virtual bool IsBorderlessModeEnabled() const = 0;
 
-  // Notifies `BrowserView` about the resizable boolean having been set vith
+  // Notifies `BrowserView` about the resizable boolean having been set with
   // `window.setResizable(bool)` API.
-  virtual void OnCanResizeFromWebAPIChanged() = 0;
+  virtual void OnWebApiWindowResizableChanged() = 0;
 
   // Returns the overall resizability of the `BrowserView` when considering
   // both the value set by the `window.setResizable(bool)` API and browser's

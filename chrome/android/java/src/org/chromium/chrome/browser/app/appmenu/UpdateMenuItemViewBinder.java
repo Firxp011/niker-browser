@@ -14,6 +14,8 @@ import android.widget.TextView;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.graphics.drawable.DrawableCompat;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.omaha.UpdateMenuItemHelper;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -25,9 +27,10 @@ import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** A custom binder used to bind the update menu item. */
+@NullMarked
 class UpdateMenuItemViewBinder implements CustomViewBinder {
     private static final int UPDATE_ITEM_VIEW_TYPE = 0;
-    private final MenuItemState mItemState;
+    private final @Nullable MenuItemState mItemState;
 
     UpdateMenuItemViewBinder(Profile profile) {
         super();
@@ -112,11 +115,6 @@ class UpdateMenuItemViewBinder implements CustomViewBinder {
             view.setOnClickListener(
                     v -> model.get(AppMenuItemProperties.CLICK_HANDLER).onItemClick(model));
         }
-    }
-
-    @Override
-    public boolean supportsEnterAnimation(int id) {
-        return true;
     }
 
     @Override

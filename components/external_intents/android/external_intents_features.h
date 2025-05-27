@@ -12,7 +12,8 @@ namespace external_intents {
 BASE_DECLARE_FEATURE(kExternalNavigationDebugLogs);
 BASE_DECLARE_FEATURE(kBlockFrameRenavigations);
 BASE_DECLARE_FEATURE(kBlockIntentsToSelf);
-BASE_DECLARE_FEATURE(kTrustedClientGestureBypass);
+BASE_DECLARE_FEATURE(kNavigationCaptureRefactorAndroid);
+BASE_DECLARE_FEATURE(kAuxiliaryNavigationStaysInBrowser);
 
 }  // namespace external_intents
 

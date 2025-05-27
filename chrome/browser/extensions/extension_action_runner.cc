@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/extension_action_runner.h"
 
+#include <algorithm>
 #include <memory>
 #include <tuple>
 #include <vector>
@@ -14,7 +15,6 @@
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/extensions/api/side_panel/side_panel_service.h"
 #include "chrome/browser/extensions/extension_action_dispatcher.h"
@@ -79,8 +79,7 @@ ExtensionActionRunner::ExtensionActionRunner(content::WebContents* web_contents)
       num_page_requests_(0),
       browser_context_(web_contents->GetBrowserContext()),
       was_used_on_page_(false),
-      ignore_active_tab_granted_(false),
-      test_observer_(nullptr) {
+      ignore_active_tab_granted_(false) {
   CHECK(web_contents);
   extension_registry_observation_.Observe(
       ExtensionRegistry::Get(browser_context_));
@@ -162,7 +161,7 @@ void ExtensionActionRunner::GrantTabPermissions(
     const std::vector<const Extension*>& extensions) {
   SitePermissionsHelper permissions_helper(
       Profile::FromBrowserContext(browser_context_));
-  bool refresh_required = base::ranges::any_of(
+  bool refresh_required = std::ranges::any_of(
       extensions, [this, &permissions_helper](const Extension* extension) {
         return permissions_helper.PageNeedsRefreshToRun(
             GetBlockedActions(extension->id()));
@@ -174,8 +173,7 @@ void ExtensionActionRunner::GrantTabPermissions(
                                           refresh_required);
   // Immediately grant permissions to every extension.
   for (auto* extension : extensions) {
-    TabHelper::FromWebContents(web_contents())
-        ->active_tab_permission_granter()
+    ActiveTabPermissionGranter::FromWebContents(web_contents())
         ->GrantIfRequested(extension);
   }
 
@@ -188,7 +186,7 @@ void ExtensionActionRunner::GrantTabPermissions(
   // hasn't been refreshed yet.
   const GURL& url = web_contents()->GetLastCommittedURL();
   auto* permissions_manager = PermissionsManager::Get(browser_context_);
-  DCHECK(base::ranges::all_of(
+  DCHECK(std::ranges::all_of(
       extensions, [url, &permissions_manager](const Extension* extension) {
         return permissions_manager->GetUserSiteAccess(*extension, url) ==
                PermissionsManager::UserSiteAccess::kOnClick;
@@ -217,8 +215,8 @@ void ExtensionActionRunner::OnWebRequestBlocked(const Extension* extension) {
     NotifyChange(extension);
   }
 
-  if (test_observer_) {
-    test_observer_->OnBlockedActionAdded();
+  for (TestObserver& observer : test_observers_) {
+    observer.OnBlockedActionAdded();
   }
 }
 
@@ -256,8 +254,7 @@ bool ExtensionActionRunner::WantsToRun(const Extension* extension) {
 
 void ExtensionActionRunner::RunForTesting(const Extension* extension) {
   if (WantsToRun(extension)) {
-    TabHelper::FromWebContents(web_contents())
-        ->active_tab_permission_granter()
+    ActiveTabPermissionGranter::FromWebContents(web_contents())
         ->GrantIfRequested(extension);
   }
 }
@@ -303,8 +300,8 @@ void ExtensionActionRunner::RequestScriptInjection(
 
   was_used_on_page_ = true;
 
-  if (test_observer_) {
-    test_observer_->OnBlockedActionAdded();
+  for (TestObserver& observer : test_observers_) {
+    observer.OnBlockedActionAdded();
   }
 }
 
@@ -344,10 +341,6 @@ void ExtensionActionRunner::OnRequestScriptInjectionPermission(
     mojom::InjectionType script_type,
     mojom::RunLocation run_location,
     mojom::LocalFrameHost::RequestScriptInjectionPermissionCallback callback) {
-  if (!crx_file::id_util::IdIsValid(extension_id)) {
-    NOTREACHED() << "'" << extension_id << "' is not a valid id.";
-  }
-
   const Extension* extension = ExtensionRegistry::Get(browser_context_)
                                    ->enabled_extensions()
                                    .GetByID(extension_id);
@@ -374,6 +367,14 @@ void ExtensionActionRunner::OnRequestScriptInjectionPermission(
       // "no"). Just let the request fizzle and die.
       break;
   }
+}
+
+void ExtensionActionRunner::AddObserver(TestObserver* observer) {
+  test_observers_.AddObserver(observer);
+}
+
+void ExtensionActionRunner::RemoveObserver(TestObserver* observer) {
+  test_observers_.RemoveObserver(observer);
 }
 
 void ExtensionActionRunner::NotifyChange(const Extension* extension) {
@@ -444,8 +445,7 @@ void ExtensionActionRunner::RunBlockedActions(const Extension* extension) {
   // the given tab.
   // The extension may already have active tab at this point, but granting
   // it twice is essentially a no-op.
-  TabHelper::FromWebContents(web_contents())
-      ->active_tab_permission_granter()
+  ActiveTabPermissionGranter::FromWebContents(web_contents())
       ->GrantIfRequested(extension);
 
   RunPendingScriptsForExtension(extension);
