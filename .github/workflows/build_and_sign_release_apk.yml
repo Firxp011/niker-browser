@@ -169,7 +169,7 @@ jobs:
           echo 'user = storage' >> $HOME/.config/rclone/rclone.conf
           echo 'key_pem = ${{ secrets.STORAGE_KEY }}' >> $HOME/.config/rclone/rclone.conf
 
-      - name: Clean Up SSH Key
+      - name: Clean Up SSH Key 
         run: |
           ssh-agent -k
           rm -f /tmp/ssh_key
